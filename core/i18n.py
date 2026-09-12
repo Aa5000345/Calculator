@@ -10,10 +10,13 @@ class I18n:
         self.load(lang)
 
     def load(self, lang):
-        self.lang = lang
         path = os.path.join(self.dir, f"{lang}.json")
+        if not os.path.exists(path):
+            path = os.path.join(self.dir, "en_US.json")
+            lang = "en_US"
         with open(path, "r", encoding="utf-8") as f:
             self.trans = json.load(f)
+        self.lang = lang
 
     def t(self, key, default=None):
-        return self.trans.get(key, default or key)
+        return self.trans.get(key, default if default is not None else key)
