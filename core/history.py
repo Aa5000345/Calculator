@@ -1,6 +1,6 @@
+import datetime
 import json
 import os
-import datetime
 
 
 class History:
@@ -27,8 +27,11 @@ class History:
         self.save()
 
     def save(self):
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.items[-1000:], f, ensure_ascii=False, indent=2)
+        try:
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(self.items[-2000:], f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def clear(self):
         self.items = []
