@@ -1,0 +1,51 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当你推送形如 v1.0.0 的标签时触发
+  workflow_dispatch:  # 允许手动在 Actions 页面触发
+
+permissions:
+  contents: write  # 允许创建 Release 和上传资产
+
+jobs:
+  build:
+    runs-on: windows-latest  # PyInstaller 打包 Windows exe 必须用 Windows 环境
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'  # 选择与本地一致的 Python 版本
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller pyinstaller-hooks-contrib
+
+      - name: Build with PyInstaller
+        run: pyinstaller MultiCalc.spec --clean --noconfirm
+
+      - name: Package dist folder
+        run: |
+          cd dist
+          Compress-Archive -Path MultiCalc\* -DestinationPath ../MultiCalc-Windows.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MultiCalc-Windows
+          path: MultiCalc-Windows.zip
+
+      - name: Create Release and upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MultiCalc-Windows.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
