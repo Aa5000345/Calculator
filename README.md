@@ -7,7 +7,7 @@ Windows 11 桌面多功能计算器，基于 PySide6。
 ```bash
 pip install -r requirements.txt
 ```
-## 使用
+## 运行
 
 ```bash
-python main.py
+py main.py
