@@ -1,0 +1,8 @@
+{
+  "name": "nord",
+  "label": "Nord",
+  "palette": {
+    "bg": "#2e3440", "fg": "#eceff4", "panel": "#3b4252",
+    "accent": "#88c0d0", "border": "#4c566a", "hover": "#434c5e"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "catppuccin",
+  "label": "Catppuccin Mocha",
+  "palette": {
+    "bg": "#1e1e2e", "fg": "#cdd6f4", "panel": "#313244",
+    "accent": "#cba6f7", "border": "#45475a", "hover": "#45475a"
+  }
+}

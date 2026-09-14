@@ -1,12 +1,14 @@
-"""设置管理：默认值 + 用户覆盖 + 热重载 + 导入导出 + 草稿（带防抖写盘）。
+"""设置管理：默认值 + 用户覆盖 + 热重载 + 导入导出 + 草稿（带防抖写盘）
++ 主题文件扫描（config/themes/*.json）。
 
-修复：
+修复历史：
 - update() 逐 key 通知监听器（原为 notify(None)，导致 language 热切换失效）
 - save()/export_to() 不再写入 _drafts（避免与 draft.json 重复）
 - 增加线程锁，避免后台 Worker 与 UI 并发修改
 - reload_if_changed() 忽略 _drafts 差异
 - set_draft() 使用 300ms 防抖，避免每次按键都写盘
 - 提供 flush() 供应用退出时强制冲刷草稿
+- palette() 支持从 config/themes/*.json 读取主题
 """
 from __future__ import annotations
 
@@ -37,10 +39,13 @@ class Settings:
 
         self._load_user()
         self._load_drafts()
+        self._load_theme_files()
 
-        self._listeners = []
+        self._listeners: list = []
 
-    # ---------------- 读写 ----------------
+    # ==================================================================
+    # 读写
+    # ==================================================================
 
     def _load_user(self):
         if not os.path.exists(self.user_path):
@@ -70,6 +75,8 @@ class Settings:
         if "_drafts" in self.data:
             merged["_drafts"] = self.data["_drafts"]
         self.data = merged
+        # 主题文件可能变化，重新扫描
+        self._load_theme_files()
         return True
 
     def get(self, key, default=None):
@@ -110,11 +117,14 @@ class Settings:
     def reset(self, notify=True):
         with self._lock:
             self.data = copy.deepcopy(self.default)
+            self._load_theme_files()
             self.save()
         if notify:
             self._notify(None)
 
-    # ---------------- 导入 / 导出 ----------------
+    # ==================================================================
+    # 导入 / 导出
+    # ==================================================================
 
     def export_to(self, path):
         clean = {k: v for k, v in self.data.items() if k != "_drafts"}
@@ -132,10 +142,13 @@ class Settings:
         if "_drafts" in self.data:
             merged["_drafts"] = self.data["_drafts"]
         self.data = merged
+        self._load_theme_files()
         self.save()
         self._notify(None)
 
-    # ---------------- 草稿（防抖） ----------------
+    # ==================================================================
+    # 草稿（防抖）
+    # ==================================================================
 
     def _load_drafts(self):
         if not os.path.exists(self.draft_path):
@@ -195,7 +208,9 @@ class Settings:
     def get_draft(self, key, default=""):
         return self.data.get("_drafts", {}).get(key, default)
 
-    # ---------------- 监听器 ----------------
+    # ==================================================================
+    # 监听器
+    # ==================================================================
 
     def add_listener(self, fn):
         if fn not in self._listeners:
@@ -212,23 +227,127 @@ class Settings:
             except Exception:
                 pass
 
-    # ---------------- 配色 / 汇率 / 模块 ----------------
+    # ==================================================================
+    # 主题文件扫描
+    # ==================================================================
+
+    def _load_theme_files(self):
+        """扫描 config/themes/*.json，作为可选主题加载到 self.data['_themes']。
+
+        default_path 一般位于 <base>/config/default_settings.json，
+        因此主题目录位于 <base>/config/themes/。
+        """
+        themes_dir = os.path.join(
+            os.path.dirname(self.default_path), "themes")
+        out = {}
+        if os.path.isdir(themes_dir):
+            for fn in sorted(os.listdir(themes_dir)):
+                if not fn.endswith(".json"):
+                    continue
+                try:
+                    with open(os.path.join(themes_dir, fn),
+                              "r", encoding="utf-8") as f:
+                        info = json.load(f)
+                    name = info.get("name") or os.path.splitext(fn)[0]
+                    pal = info.get("palette") or {}
+                    if name and isinstance(pal, dict):
+                        out[name] = {
+                            "label": info.get("label", name),
+                            "palette": pal,
+                        }
+                except Exception:
+                    pass
+        self.data["_themes"] = out
+
+    def themes(self):
+        """返回 {name: {"label": ..., "palette": {...}}}。
+
+        合并 default_settings.json 里的 palette 与 config/themes/*.json。
+        """
+        result = {}
+        for name, pal in (self.default.get("palette") or {}).items():
+            result[name] = {"label": name, "palette": pal}
+        for name, info in (self.data.get("_themes") or {}).items():
+            result[name] = info
+        return result
+
+    def save_theme(self, name, label, palette):
+        """保存主题到 config/themes/{name}.json。返回路径或 None。"""
+        themes_dir = os.path.join(
+            os.path.dirname(self.default_path), "themes")
+        try:
+            os.makedirs(themes_dir, exist_ok=True)
+            path = os.path.join(themes_dir, f"{name}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"name": name, "label": label,
+                           "palette": palette}, f,
+                          ensure_ascii=False, indent=2)
+            self._load_theme_files()
+            return path
+        except Exception:
+            return None
+
+    def delete_theme(self, name):
+        """删除 config/themes/{name}.json。"""
+        themes_dir = os.path.join(
+            os.path.dirname(self.default_path), "themes")
+        try:
+            path = os.path.join(themes_dir, f"{name}.json")
+            if os.path.exists(path):
+                os.remove(path)
+            self._load_theme_files()
+        except Exception:
+            pass
+
+    # ==================================================================
+    # 配色 / 汇率 / 模块
+    # ==================================================================
 
     def palette(self, theme_override=None):
+        """返回当前主题的调色板字典。
+
+        优先级：
+        1. 用户在 settings.json 的 palette 字段中自定义的
+        2. config/themes/*.json 中的主题
+        3. default_settings.json 中的 dark 兜底
+        """
         theme = theme_override or self.get("theme", "dark")
         if theme == "system":
             theme = "dark"
+
+        # 1) 用户自定义 palette
         pal = self.get("palette", {}) or {}
-        return pal.get(theme, pal.get("dark", {
+        if theme in pal:
+            return pal[theme]
+
+        # 2) 主题文件
+        themes = self.data.get("_themes") or {}
+        if theme in themes:
+            return themes[theme]["palette"]
+
+        # 3) 兜底
+        return pal.get("dark", {
             "bg": "#1e1e1e", "fg": "#ffffff", "panel": "#2d2d30",
-            "accent": "#007acc", "border": "#3f3f46", "hover": "#3a3d41"}))
+            "accent": "#007acc", "border": "#3f3f46", "hover": "#3a3d41"})
 
     def set_palette_color(self, key, color):
+        """为当前主题设置单个调色板颜色（写入用户 palette 字段）。"""
         theme = self.get("theme", "dark")
-        pal = dict(self.get("palette", {}))
-        theme_pal = dict(pal.get(theme, {}))
-        theme_pal[key] = color
-        pal[theme] = theme_pal
+        if theme == "system":
+            theme = "dark"
+        pal = dict(self.get("palette", {}) or {})
+        # 若当前主题来自主题文件（不在 pal 中），需要以文件主题为基底
+        base = pal.get(theme)
+        if base is None:
+            themes = self.data.get("_themes") or {}
+            if theme in themes:
+                base = dict(themes[theme]["palette"])
+            else:
+                base = dict(self.palette(theme))
+        else:
+            base = dict(base)
+        base[key] = color
+        pal[theme] = base
         self.set("palette", pal)
 
     def get_manual_rate(self, pair):

@@ -1,0 +1,8 @@
+{
+  "name": "solarized_dark",
+  "label": "Solarized Dark",
+  "palette": {
+    "bg": "#002b36", "fg": "#93a1a1", "panel": "#073642",
+    "accent": "#268bd2", "border": "#586e75", "hover": "#586e75"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "github_light",
+  "label": "GitHub Light",
+  "palette": {
+    "bg": "#ffffff", "fg": "#24292f", "panel": "#f6f8fa",
+    "accent": "#0969da", "border": "#d0d7de", "hover": "#eaeef2"
+  }
+}

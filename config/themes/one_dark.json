@@ -1,0 +1,8 @@
+{
+  "name": "one_dark",
+  "label": "One Dark",
+  "palette": {
+    "bg": "#282c34", "fg": "#abb2bf", "panel": "#21252b",
+    "accent": "#61afef", "border": "#3e4451", "hover": "#3e4451"
+  }
+}

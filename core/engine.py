@@ -19,6 +19,7 @@ from sympy.parsing.sympy_parser import (
 
 from core.errors import InputError, MathError, UnitError, NetworkError
 from core.logger import log_warn
+from core import symbols as _symbols_mod
 
 ureg = UnitRegistry()
 
@@ -80,9 +81,20 @@ def _parse(expr, extra=None):
     if not s:
         raise InputError("表达式为空", friendly_key="err_empty_expr")
     _safety_check(s)
+
+    # 1) 赋值语句：name = ...  或  name(args) = ...
+    assignment = _symbols_mod.match_assignment(s)
+    if assignment is not None:
+        return _handle_assignment(assignment)
+
+    # 2) 普通表达式：把用户变量注入 local_dict
     local = dict(_LOCALS)
     if extra:
         local.update(extra)
+    for name, val in _symbols_mod.get_all().items():
+        if name not in local:
+            local[name] = val
+
     try:
         return parse_expr(s, local_dict=local, transformations=_TRANSFORMS)
     except SyntaxError as e:
@@ -91,6 +103,49 @@ def _parse(expr, extra=None):
         raise InputError(f"表达式非法：{e}", friendly_key="err_parse") from e
     except Exception as e:  # noqa: BLE001
         raise InputError(f"无法解析：{e}", friendly_key="err_parse") from e
+
+
+def _handle_assignment(assignment):
+    """处理 ``x = expr`` / ``f(x, y) = expr``。"""
+    name, args_str, rhs = assignment
+
+    # --- 变量 ---
+    if args_str is None:
+        val = _parse(rhs)
+        _symbols_mod.set_symbol(name, val, raw=rhs)
+        return val
+
+    # --- 函数 ---
+    args = [a.strip() for a in args_str[1:-1].split(",") if a.strip()]
+    if not args:
+        raise InputError("函数定义缺少参数", friendly_key="err_parse")
+    syms = sp.symbols(" ".join(args))
+    if not isinstance(syms, (tuple, list)):
+        syms = (syms,)
+    if len(syms) != len(args):
+        raise InputError("函数参数名重复或非法", friendly_key="err_parse")
+
+    local = dict(_LOCALS)
+    for n, s in zip(args, syms):
+        local[n] = s
+    for k, v in _symbols_mod.get_all().items():
+        if k not in local:
+            local[k] = v
+
+    try:
+        body = parse_expr(_norm(rhs), local_dict=local,
+                          transformations=_TRANSFORMS)
+    except Exception as e:  # noqa: BLE001
+        raise InputError(f"函数体解析失败：{e}",
+                         friendly_key="err_parse") from e
+
+    lam = sp.Lambda(syms[0] if len(syms) == 1 else syms, body)
+    raw_repr = f"{name}{args_str} = {rhs}"
+    _symbols_mod.set_symbol(name, lam, raw=str(body))
+    # 覆盖 raw 为人类可读形式
+    _symbols_mod._RAW[name] = raw_repr
+    _symbols_mod._save()
+    return lam
 
 
 def _num(obj, digits: int = 15):
@@ -167,6 +222,57 @@ def _format_scalar(obj, fmt: str, digits, sci, fraction, percent):
     return None
 
 
+def _is_quantity(obj):
+    try:
+        from pint import Quantity
+        return isinstance(obj, Quantity)
+    except Exception:
+        return False
+
+
+def _try_unit_parse(s):
+    """尝试用 pint 解析；若结果含单位且非无量纲，返回 Quantity；否则 None。"""
+    try:
+        result = ureg.parse_expression(str(s))
+    except Exception:
+        return None
+    if not _is_quantity(result):
+        return None
+    try:
+        if result.dimensionless:
+            return None
+    except Exception:
+        pass
+    return result
+
+
+def _format_quantity(q, fmt="text", digits=None):
+    """格式化 pint Quantity 为带单位的字符串。"""
+    try:
+        magnitude = q.magnitude
+        if digits is not None:
+            try:
+                m = float(magnitude)
+                text_num = f"{m:.{int(digits)}f}".rstrip("0").rstrip(".")
+            except Exception:
+                text_num = str(magnitude)
+        else:
+            try:
+                m = float(magnitude)
+                if abs(m - round(m)) < 1e-12 and abs(m) < 1e15:
+                    text_num = str(int(round(m)))
+                else:
+                    text_num = f"{m:g}"
+            except Exception:
+                text_num = str(magnitude)
+
+        units_str = f"{q.units:~}"
+        if fmt == "latex":
+            return f"{text_num}\\;\\mathrm{{{units_str}}}"
+        return f"{text_num} {units_str}"
+    except Exception:
+        return str(q)
+
 def format_result(obj, fmt: str = "text", *,
                   digits=None, sci=False, fraction=False, percent=False):
     """格式化结果。
@@ -185,7 +291,8 @@ def format_result(obj, fmt: str = "text", *,
         return obj
     if isinstance(obj, bool):
         return str(obj)
-
+    if _is_quantity(obj):
+        return _format_quantity(obj, fmt, digits)
     # 先尝试数值格式化
     special = _format_scalar(obj, fmt, digits, sci, fraction, percent)
     if special is not None:
@@ -248,6 +355,11 @@ def format_result(obj, fmt: str = "text", *,
 # ---------------------------------------------------------------------------
 
 def basic_calc(expr):
+    # 单位感知优先
+    q = _try_unit_parse(expr)
+    if q is not None:
+        return q
+
     e = _parse(expr)
     try:
         val = sp.N(e, 30)
@@ -282,6 +394,9 @@ def scientific_calc(expr):
 
 
 def sci_eval(expr):
+    q = _try_unit_parse(expr)
+    if q is not None:
+        return q
     return _num(_parse(expr))
 
 
@@ -1322,3 +1437,135 @@ def sample_surface(expr, xmin, xmax, ymin, ymax,
     Z = np.asarray(Z, dtype=float)
     Z[~np.isfinite(Z)] = np.nan
     return X, Y, Z
+
+# ===========================================================================
+# 第六轮新增：ODE / 数值积分 / 优化
+# ===========================================================================
+
+def sci_dsolve(eq_str, func="y", var="x", ics=None):
+    """ODE 求解。
+
+    例：
+        dsolve("y' + y = 0", func="y", var="x")
+        dsolve("y'' + y = 0", func="y", var="x", ics={0: 1})
+    """
+    x = sp.Symbol(var)
+    y = sp.Function(func)
+
+    s = str(eq_str).strip()
+    if "=" in s:
+        lhs, rhs = s.split("=", 1)
+        s = f"({lhs}) - ({rhs})"
+
+    ph2 = "__ODED2__"
+    ph1 = "__ODED1__"
+    s = re.sub(rf"\b{func}''+", ph2, s)
+    s = re.sub(rf"\b{func}'", ph1, s)
+    s = re.sub(rf"\b{func}\b(?!\s*\()", f"{func}({var})", s)
+    s = s.replace(ph2, f"Derivative({func}({var}), {var}, 2)")
+    s = s.replace(ph1, f"Derivative({func}({var}), {var})")
+
+    local = dict(_LOCALS)
+    local[var] = x
+    local[func] = y
+    try:
+        e = parse_expr(s, local_dict=local, transformations=_TRANSFORMS)
+    except Exception as ex:
+        raise InputError(f"ODE 解析失败：{ex}",
+                         friendly_key="err_parse") from ex
+
+    kwargs = {}
+    if ics:
+        kwargs["ics"] = ics
+    try:
+        sol = sp.dsolve(e, y(x), **kwargs)
+    except Exception as ex:
+        raise MathError(f"dsolve 失败：{ex}",
+                        friendly_key="err_math") from ex
+    return sol
+
+
+def sci_quad(expr, var="x", lower=0, upper=1):
+    """数值积分（scipy.integrate.quad）。"""
+    v = sp.Symbol(var)
+    e = _parse(expr)
+    try:
+        f = sp.lambdify(v, e, modules=["numpy", "scipy"])
+    except Exception as ex:
+        raise MathError(f"lambdify 失败：{ex}",
+                        friendly_key="err_math") from ex
+    from scipy import integrate as _si
+    try:
+        val, err = _si.quad(f, float(lower), float(upper))
+    except Exception as ex:
+        raise MathError(f"数值积分失败：{ex}",
+                        friendly_key="err_math") from ex
+    return {"value": float(val), "estimated_error": float(err)}
+
+
+def sci_minimize(expr, var="x", x0=0, method="BFGS"):
+    """一元函数数值最小化。"""
+    v = sp.Symbol(var)
+    e = _parse(expr)
+    try:
+        f = sp.lambdify(v, e, modules=["numpy"])
+    except Exception as ex:
+        raise MathError(f"lambdify 失败：{ex}",
+                        friendly_key="err_math") from ex
+    from scipy.optimize import minimize as _min
+    try:
+        res = _min(lambda a: float(f(a[0])), [float(x0)], method=method)
+    except Exception as ex:
+        raise MathError(f"优化失败：{ex}",
+                        friendly_key="err_math") from ex
+    return {
+        "x": float(res.x[0]),
+        "minimum": float(res.fun),
+        "success": bool(res.success),
+        "message": str(res.message),
+        "iterations": int(getattr(res, "nit", 0)),
+    }
+
+
+def sci_linprog(params_json):
+    """线性规划。
+
+    params_json 例：
+        {"c":[1,2],
+         "A_ub":[[1,1],[1,-1]],
+         "b_ub":[10,2],
+         "bounds":[[0,null],[0,null]]}
+    """
+    try:
+        p = _json.loads(params_json) if isinstance(params_json, str) else params_json
+    except Exception as ex:
+        raise InputError(f"JSON 解析失败：{ex}",
+                         friendly_key="err_input") from ex
+
+    try:
+        c = [float(x) for x in p.get("c", [])]
+        A_ub = [[float(v) for v in row] for row in p.get("A_ub", [])] or None
+        b_ub = [float(x) for x in p.get("b_ub", [])] or None
+        bounds = p.get("bounds")
+        if bounds:
+            bounds = [
+                (float(b[0]) if b[0] is not None else None,
+                 float(b[1]) if b[1] is not None else None)
+                for b in bounds
+            ]
+    except Exception as ex:
+        raise InputError(f"参数非法：{ex}",
+                         friendly_key="err_input") from ex
+
+    from scipy.optimize import linprog
+    try:
+        res = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs")
+    except Exception as ex:
+        raise MathError(f"linprog 失败：{ex}",
+                        friendly_key="err_math") from ex
+    return {
+        "x": [float(v) for v in res.x] if res.x is not None else [],
+        "fun": float(res.fun) if res.fun is not None else None,
+        "success": bool(res.success),
+        "message": str(res.message),
+    }

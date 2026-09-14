@@ -378,3 +378,46 @@ def depreciation(cost, salvage, life, method="straight", factor=2.0,
             result["depreciation"] = out[yi - 1]["depreciation"]
             result["book_value"] = out[yi - 1]["book_value"]
     return result
+
+def xirr(cashflows, dates, guess=0.1):
+    """不规则现金流 IRR。
+
+    cashflows: 数值列表；dates: ISO 日期字符串列表（同长度）。
+    返回年化收益率（%）。
+    """
+    import datetime as _dt
+
+    if len(cashflows) != len(dates) or len(cashflows) < 2:
+        raise InputError("现金流与日期长度需一致且至少 2 项",
+                         friendly_key="err_input")
+
+    parsed = []
+    for d in dates:
+        try:
+            parsed.append(_dt.date.fromisoformat(str(d)))
+        except Exception:
+            raise InputError(f"日期非法：{d}", friendly_key="err_date_format")
+
+    base = min(parsed)
+    years = [(d - base).days / 365.0 for d in parsed]
+    cfs = [float(c) for c in cashflows]
+
+    def f(r):
+        if r <= -1:
+            return float("inf")
+        return sum(c / (1 + r) ** t for c, t in zip(cfs, years))
+
+    lo, hi = -0.9999, 10.0
+    flo, fhi = f(lo), f(hi)
+    if flo * fhi > 0:
+        raise InputError("XIRR 无解", friendly_key="err_no_solution")
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        fm = f(mid)
+        if abs(fm) < 1e-9:
+            return mid * 100.0
+        if flo * fm < 0:
+            hi = mid
+        else:
+            lo, flo = mid, fm
+    return (lo + hi) / 2 * 100.0

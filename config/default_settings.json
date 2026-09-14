@@ -3,16 +3,28 @@
   "theme": "dark",
   "palette": {
     "dark": {
-      "bg": "#1e1e1e", "fg": "#ffffff", "panel": "#2d2d30",
-      "accent": "#007acc", "border": "#3f3f46", "hover": "#3a3d41"
+      "bg": "#1e1e1e",
+      "fg": "#ffffff",
+      "panel": "#2d2d30",
+      "accent": "#007acc",
+      "border": "#3f3f46",
+      "hover": "#3a3d41"
     },
     "light": {
-      "bg": "#f5f5f5", "fg": "#000000", "panel": "#ffffff",
-      "accent": "#0066cc", "border": "#c8c8c8", "hover": "#e6e6e6"
+      "bg": "#f5f5f5",
+      "fg": "#000000",
+      "panel": "#ffffff",
+      "accent": "#0066cc",
+      "border": "#c8c8c8",
+      "hover": "#e6e6e6"
     },
     "high_contrast": {
-      "bg": "#000000", "fg": "#ffffff", "panel": "#000000",
-      "accent": "#ffff00", "border": "#ffffff", "hover": "#404000"
+      "bg": "#000000",
+      "fg": "#ffffff",
+      "panel": "#000000",
+      "accent": "#ffff00",
+      "border": "#ffffff",
+      "hover": "#404000"
     }
   },
   "font_family": "Microsoft YaHei",
@@ -24,13 +36,41 @@
   "result_percent": false,
   "currency_source": "open.er-api.com",
   "visible_modules": {
-    "basic": true, "scientific": true, "unit": true, "currency": true,
-    "base": true, "matrix": true, "stats": true, "plot": true,
-    "plot3d": true, "finance": true, "date": true, "random": true,
-    "probability": true, "bits": true, "crypto_tools": true,
-    "latex": true, "history": true, "settings": true
+    "basic": true,
+    "scientific": true,
+    "unit": true,
+    "currency": true,
+    "base": true,
+    "matrix": true,
+    "stats": true,
+    "plot": true,
+    "plot3d": true,
+    "finance": true,
+    "date": true,
+    "random": true,
+    "probability": true,
+    "bits": true,
+    "crypto_tools": true,
+    "latex": true,
+    "data_table": true,
+    "tools": true,
+    "snippets": true,
+    "timer": true,
+    "clipboard_history": true,
+    "history": true,
+    "settings": true
   },
   "module_order": [],
+  "module_groups": [
+    {"name": "基础", "keys": ["basic", "scientific"]},
+    {"name": "转换", "keys": ["unit", "currency", "base"]},
+    {"name": "数据", "keys": ["stats", "probability", "random", "data_table"]},
+    {"name": "数学", "keys": ["matrix", "plot", "plot3d"]},
+    {"name": "财务", "keys": ["finance", "date"]},
+    {"name": "工具", "keys": ["bits", "crypto_tools", "latex", "tools"]},
+    {"name": "生产力", "keys": ["snippets", "timer", "clipboard_history"]},
+    {"name": "系统", "keys": ["history", "settings"]}
+  ],
   "manual_rates": {},
   "workspace_layout": null,
   "window_geometry": null,
