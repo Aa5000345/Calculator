@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from core import dates as dtmod
 from ._common import friendly_error
 from .base import CalcPanel
+from PySide6.QtWidgets import QTabWidget
 
 
 class DatePanel(CalcPanel):
@@ -67,10 +68,17 @@ class DatePanel(CalcPanel):
         row3 = QHBoxLayout()
         for b in (b_ts2d, b_d2ts, b_hol): row3.addWidget(b)
 
+        self._extra_tabs = QTabWidget()
+        w_main = QWidget(); vm = QVBoxLayout(w_main)
+        vm.addLayout(form)
+        vm.addLayout(row1); vm.addLayout(row2); vm.addLayout(row3)
+        vm.addWidget(self.result, 1)
+        self._extra_tabs.addTab(w_main, i18n.t("date_calc", "日期"))
+        self._extra_tabs.addTab(self._build_lunar_tab(), i18n.t("lunar", "农历"))
+        self._extra_tabs.addTab(self._build_sun_tab(), i18n.t("sun", "日出日落"))
+
         main = QVBoxLayout(self)
-        main.addLayout(form)
-        main.addLayout(row1); main.addLayout(row2); main.addLayout(row3)
-        main.addWidget(self.result, 1)
+        main.addWidget(self._extra_tabs, 1)
 
     def diff(self):
         try:
@@ -172,5 +180,53 @@ class DatePanel(CalcPanel):
             self.result.setPlainText(s)
             self.add_history(f"{self.country.text()}:{year}", s,
                              module="date-holidays")
+        except Exception as e:
+            self.result.setPlainText(friendly_error(self.i18n, e, "date"))
+
+    def _build_lunar_tab(self):
+        w = QWidget(); v = QVBoxLayout(w)
+        self.lunar_date = QLineEdit("2024-01-01")
+        b = QPushButton(self.i18n.t("calc", "转换"))
+        b.clicked.connect(self.lunar_convert)
+        v.addWidget(QLabel("公历 (YYYY-MM-DD)"))
+        v.addWidget(self.lunar_date)
+        v.addWidget(b)
+        v.addStretch(1)
+        return w
+
+    def lunar_convert(self):
+        try:
+            from core import lunar
+            r = lunar.solar_to_lunar(self.lunar_date.text())
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history("lunar", s, module="date-lunar")
+        except Exception as e:
+            self.result.setPlainText(friendly_error(self.i18n, e, "date"))
+
+    def _build_sun_tab(self):
+        w = QWidget(); f = QFormLayout(w)
+        self.sun_date = QLineEdit("2024-06-21")
+        self.sun_lat = QLineEdit("39.9")
+        self.sun_lon = QLineEdit("116.4")
+        self.sun_tz = QLineEdit("Asia/Shanghai")
+        b = QPushButton(self.i18n.t("calc", "计算"))
+        b.clicked.connect(self.sun_calc)
+        f.addRow(QLabel("Date"), self.sun_date)
+        f.addRow(QLabel("Latitude"), self.sun_lat)
+        f.addRow(QLabel("Longitude"), self.sun_lon)
+        f.addRow(QLabel("Timezone"), self.sun_tz)
+        f.addRow(b)
+        return w
+
+    def sun_calc(self):
+        try:
+            from core import astro
+            r = astro.sun_times(
+                self.sun_date.text(), self.sun_lat.text(),
+                self.sun_lon.text(), self.sun_tz.text() or "UTC")
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history("sun", s, module="date-sun")
         except Exception as e:
             self.result.setPlainText(friendly_error(self.i18n, e, "date"))

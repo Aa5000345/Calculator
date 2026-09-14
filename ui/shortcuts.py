@@ -3,13 +3,13 @@
 主窗口级：
     Ctrl+1..9    切换第 N 个可见模块
     Ctrl+,       打开设置面板
+    Ctrl+Shift+L 切换侧边栏
 
-面板级（由各自 Panel 自行安装）：
-    Enter        计算
+面板级：
+    Ctrl+Enter   计算
     Esc          取消运行中的任务
     Ctrl+L       清空输入
     Up / Down    历史表达式召回
-    Ctrl+C       复制结果（未选中文本时）
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from PySide6.QtGui import QKeySequence, QShortcut
 
 
 def install_main_window_shortcuts(window):
-    """在 MainWindow 上安装全局快捷键。"""
     # Ctrl+1..Ctrl+9 切换可见模块
     for i in range(1, 10):
         sc = QShortcut(QKeySequence(f"Ctrl+{i}"), window)
@@ -39,20 +38,16 @@ def install_main_window_shortcuts(window):
 
 def _switch_visible_index(window, idx):
     try:
-        rows = [i for i in range(window.list.count())
-                if not window.list.item(i).isHidden()]
-        if 0 <= idx < len(rows):
-            window.list.setCurrentRow(rows[idx])
+        keys = window._visible_keys_in_order()
+        if 0 <= idx < len(keys):
+            window.switch_to_key(keys[idx])
     except Exception:
         pass
 
 
 def _switch_by_key(window, key):
     try:
-        for i in range(window.list.count()):
-            if window.list.item(i).data(Qt.UserRole) == key:
-                window.list.setCurrentRow(i)
-                return
+        window.switch_to_key(key)
     except Exception:
         pass
 
@@ -75,7 +70,6 @@ def install_panel_shortcuts(panel, *,
     shortcuts = []
 
     if on_calc is not None and expr_widget is not None:
-        # 让 Enter 由 expr_widget.returnPressed 处理，这里只处理 Ctrl+Enter
         sc = QShortcut(QKeySequence("Ctrl+Return"), panel)
         sc.activated.connect(on_calc)
         shortcuts.append(sc)
@@ -94,7 +88,6 @@ def install_panel_shortcuts(panel, *,
         _install_history_recall(panel, expr_widget, history_getter,
                                 shortcuts)
 
-    # 让 QShortcut 的生命周期随 panel 走
     panel._panel_shortcuts = shortcuts
 
 
@@ -106,13 +99,6 @@ def _install_history_recall(panel, widget, history_getter, shortcuts):
         return
 
     state = {"index": -1}
-
-    def _get_text():
-        if isinstance(widget, QLineEdit):
-            return widget.text()
-        if isinstance(widget, QPlainTextEdit):
-            return widget.toPlainText()
-        return ""
 
     def _set_text(t):
         if isinstance(widget, QLineEdit):

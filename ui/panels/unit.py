@@ -1,5 +1,7 @@
-"""单位换算面板。"""
+"""单位换算面板：接收来自其他面板的"发送到单位面板"。"""
 from __future__ import annotations
+
+import re
 
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
 from core import engine
 from core import units as unit_mod
 from core.logger import log_exc
+from ui.signals import bus
 from ._common import _clear_layout, friendly_error
 from .base import CalcPanel
 
@@ -81,6 +84,11 @@ class UnitPanel(CalcPanel):
 
         self._on_category_changed()
 
+        # 订阅跨面板信号
+        bus().send_to_unit.connect(self.receive_text)
+
+    # ---------------- 类别 ----------------
+
     def _on_category_changed(self):
         cat_key = self.category.currentData()
         self.settings.set("unit_category", cat_key)
@@ -122,6 +130,8 @@ class UnitPanel(CalcPanel):
         except Exception as e:
             log_exc(e, module="UnitPanel._quick_convert")
 
+    # ---------------- 换算 ----------------
+
     def convert(self):
         try:
             v = float(self.value.text())
@@ -161,3 +171,36 @@ class UnitPanel(CalcPanel):
                 module="unit-batch")
         except Exception as e:
             self.result.setPlainText(friendly_error(self.i18n, e, "unit"))
+
+    # ---------------- 跨面板接收 ----------------
+
+    def receive_text(self, text: str):
+        """接收 "1.5 km" / "1.5 kilometer" 之类的文本。"""
+        try:
+            s = str(text).strip()
+            # 忽略多行的（例如错误卡片），只处理单行"数字 + 单位"模式
+            if "\n" in s:
+                return
+            m = re.match(
+                r"^\s*(-?\d+\.?\d*(?:[eE][-+]?\d+)?)\s+([A-Za-z°μµ/²³·]+.*?)\s*$",
+                s)
+            if not m:
+                return
+            value_str = m.group(1)
+            unit_str = m.group(2).strip()
+            self.value.setText(value_str)
+            # 优先精确匹配；找不到则跳过
+            idx = self.from_u.findData(unit_str)
+            if idx < 0:
+                for i in range(self.from_u.count()):
+                    if str(self.from_u.itemData(i)) == unit_str:
+                        idx = i
+                        break
+            if idx >= 0:
+                self.from_u.setCurrentIndex(idx)
+            else:
+                # 可编辑：直接填入
+                self.from_u.setEditText(unit_str)
+            self.convert()
+        except Exception as e:
+            log_exc(e, module="UnitPanel.receive_text")

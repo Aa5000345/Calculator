@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""主窗口：侧边栏导航 + 面板切换 + 热重载 + 状态持久化 + 模块显隐/排序。"""
+"""主窗口：侧边栏分组 + 搜索 + 面板切换 + 热重载 + 状态持久化。"""
 from __future__ import annotations
 
 import base64
@@ -9,64 +9,72 @@ from PySide6.QtCore import Qt, QTimer, QFileSystemWatcher
 from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QPushButton, QLabel, QListWidget, QListWidgetItem, QStackedWidget,
-    QDockWidget, QAbstractItemView, QDialog, QMessageBox,
+    QPushButton, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
+    QStackedWidget, QDockWidget, QAbstractItemView, QDialog, QMessageBox,
 )
 
 from core.logger import log_exc, log_info
-from ui.panels import (
-    BasicPanel, ScientificPanel, UnitPanel, CurrencyPanel, BasePanel,
-    MatrixPanel, StatsPanel, PlotPanel, Plot3DPanel, FinancePanel,
-    DatePanel, RandomPanel, ProbabilityPanel, BitsPanel, CryptoPanel,
-    LatexEditorPanel, HistoryPanel, SettingsPanel,
-)
 from ui.latex_widget import LatexLabel
 from ui.settings_dialog import ModuleVisibilityDialog
 from ui.shortcuts import install_main_window_shortcuts
-from ui.command_palette import CommandPalette
+from ui.command_palette import CommandPalette, _fuzzy_score
 from ui.tray import Tray
 from ui.split_view import SplitView
+from core import engine
 from core import updater as update_mod
 from core import plugins as plugin_mod
+from ui.panels.registry import all_panels
 
 
-# 历史记录 module 字符串 → 面板 key
+DEFAULT_GROUPS = [
+    ("基础", ["basic", "scientific"]),
+    ("转换", ["unit", "currency", "base"]),
+    ("数据", ["stats", "probability", "random", "data_table"]),
+    ("数学", ["matrix", "plot", "plot3d"]),
+    ("财务", ["finance", "date"]),
+    ("工具", ["bits", "crypto_tools", "latex", "tools"]),
+    ("生产力", ["snippets", "timer", "clipboard_history"]),
+    ("系统", ["history", "settings"]),
+]
+
+
 _MODULE_KEY_MAP = {
-    "basic": "basic",
-    "scientific": "scientific",
-    "unit": "unit",
+    "basic": "basic", "scientific": "scientific", "unit": "unit",
     "currency": "currency",
     "base": "base", "ascii": "base", "endian": "base", "ieee": "base",
-    "matrix": "matrix",
-    "stats": "stats",
-    "plot": "plot",
-    "plot3d": "plot3d",
-    "random": "random",
-    "bits": "bits",
-    "latex": "latex",
-    "settings": "settings",
+    "matrix": "matrix", "stats": "stats", "plot": "plot",
+    "plot3d": "plot3d", "random": "random", "bits": "bits",
+    "latex": "latex", "settings": "settings",
+    "data_table": "data_table", "tools": "tools",
+    "snippets": "snippets", "timer": "timer",
+    "clipboard": "clipboard_history",
+    "clipboard_history": "clipboard_history",
 }
 
 _MODULE_PREFIX_MAP = (
-    ("date-", "date"),
-    ("finance-", "finance"),
-    ("stats-", "stats"),
-    ("random-", "random"),
-    ("prob-", "probability"),
-    ("bits-", "bits"),
-    ("unit-", "unit"),
-    ("currency-", "currency"),
-    ("matrix-", "matrix"),
-    ("enc-", "crypto_tools"),
-    ("dec-", "crypto_tools"),
-    ("hash-", "crypto_tools"),
-    ("aes-", "crypto_tools"),
-    ("rsa-", "crypto_tools"),
-    ("classic-", "crypto_tools"),
-    ("crypto", "crypto_tools"),
-    ("totp", "crypto_tools"),
+    ("date-", "date"), ("finance-", "finance"),
+    ("stats-", "stats"), ("random-", "random"),
+    ("prob-", "probability"), ("bits-", "bits"),
+    ("unit-", "unit"), ("currency-", "currency"), ("matrix-", "matrix"),
+    ("enc-", "crypto_tools"), ("dec-", "crypto_tools"),
+    ("hash-", "crypto_tools"), ("aes-", "crypto_tools"),
+    ("rsa-", "crypto_tools"), ("classic-", "crypto_tools"),
+    ("crypto", "crypto_tools"), ("totp", "crypto_tools"),
     ("pw-strength", "crypto_tools"),
+    ("table-", "data_table"),
+    ("jwt", "tools"), ("qr", "tools"), ("regex", "tools"),
 )
+
+
+class _Ctx:
+    def __init__(self, base_path, settings, i18n, history,
+                 main_window, reuse_handler):
+        self.base_path = base_path
+        self.settings = settings
+        self.i18n = i18n
+        self.history = history
+        self.main_window = main_window
+        self.reuse_handler = reuse_handler
 
 
 class MainWindow(QMainWindow):
@@ -80,7 +88,10 @@ class MainWindow(QMainWindow):
         self._panels = {}
         self._keys = []
         self._titles = {}
+        self._panel_group = {}
+        self._item_by_key = {}
         self._split = None
+        self._force_quit = False
 
         self._restore_geometry()
         self._build()
@@ -95,16 +106,13 @@ class MainWindow(QMainWindow):
         self._watcher.fileChanged.connect(self._on_settings_file_changed)
 
         install_main_window_shortcuts(self)
-        self._force_quit = False
         self._tray = Tray(self, self.i18n)
         if self.settings.get("tray_enabled", False):
             self._tray.install()
         self._build_menu()
         self._load_plugins()
 
-    # ==================================================================
-    # 几何持久化
-    # ==================================================================
+    # ---------------- 几何 ----------------
 
     def _restore_geometry(self):
         geom = self.settings.get("window_geometry")
@@ -115,18 +123,9 @@ class MainWindow(QMainWindow):
                 return
             except Exception:
                 pass
-        size = self.settings.get("window_size")
-        if isinstance(size, (list, tuple)) and len(size) == 2:
-            try:
-                self.resize(int(size[0]), int(size[1]))
-                return
-            except Exception:
-                pass
         self.resize(1280, 880)
 
-    # ==================================================================
-    # 构建
-    # ==================================================================
+    # ---------------- 构建 ----------------
 
     def _build(self):
         self.setWindowTitle(self.i18n.t("app_title"))
@@ -149,177 +148,272 @@ class MainWindow(QMainWindow):
 
         self.toggle = QPushButton("≡")
         self.toggle.setFixedSize(34, 28)
-        self.toggle.setToolTip(self.i18n.t("collapse", "Collapse"))
         self.toggle.clicked.connect(self.toggle_sidebar)
 
         self.vis_btn = QPushButton(self.i18n.t("module_visibility", "Visibility"))
         self.vis_btn.setFixedHeight(26)
         self.vis_btn.clicked.connect(self.open_visibility_dialog)
 
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText(
+            self.i18n.t("search_modules", "搜索模块…"))
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._apply_filter)
+
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setDragDropMode(QAbstractItemView.InternalMove)
+        self.tree.setDefaultDropAction(Qt.MoveAction)
+        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setMinimumWidth(180)
+        self.tree.setIndentation(14)
+        self.tree.setRootIsDecorated(True)
+        self.tree.setExpandsOnDoubleClick(False)
+        self.tree.itemClicked.connect(self._on_tree_item_clicked)
+        self.tree.model().rowsMoved.connect(self._on_tree_rows_moved)
+
         head = QHBoxLayout()
         head.addWidget(self.toggle)
         head.addWidget(QLabel(self.i18n.t("modules", "Modules")))
         head.addStretch(1)
 
-        self.list = QListWidget()
-        self.list.setDragDropMode(QAbstractItemView.InternalMove)
-        self.list.setDefaultDropAction(Qt.MoveAction)
-        self.list.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.list.setMinimumWidth(180)
-        self.list.currentRowChanged.connect(self.switch)
-        self.list.model().rowsMoved.connect(self._on_rows_moved)
-
         sl.addLayout(head)
-        sl.addWidget(self.list, 1)
+        sl.addWidget(self.search_box)
+        sl.addWidget(self.tree, 1)
         sl.addWidget(self.vis_btn)
         self.dock.setWidget(side)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.dock)
 
-        # ---- 注册面板 ----
-        self._register("basic", self.i18n.t("basic"),
-                       BasicPanel(self.settings, self.i18n, self.history))
-        self._register("scientific", self.i18n.t("scientific"),
-                       ScientificPanel(self.settings, self.i18n, self.history))
-        self._register("unit", self.i18n.t("unit"),
-                       UnitPanel(self.settings, self.i18n, self.history))
-        self._register("currency", self.i18n.t("currency"),
-                       CurrencyPanel(self.base_path, self.settings,
-                                     self.i18n, self.history))
-        self._register("base", self.i18n.t("base"),
-                       BasePanel(self.settings, self.i18n, self.history))
-        self._register("matrix", self.i18n.t("matrix"),
-                       MatrixPanel(self.settings, self.i18n, self.history))
-        self._register("stats", self.i18n.t("stats"),
-                       StatsPanel(self.settings, self.i18n, self.history))
-        self._register("plot", self.i18n.t("plot"),
-                       PlotPanel(self.settings, self.i18n, self.history))
-        self._register("plot3d", self.i18n.t("plot3d", "3D Plot"),
-                       Plot3DPanel(self.settings, self.i18n, self.history))
-        self._register("finance", self.i18n.t("finance"),
-                       FinancePanel(self.settings, self.i18n, self.history))
-        self._register("date", self.i18n.t("date"),
-                       DatePanel(self.settings, self.i18n, self.history))
-        self._register("random", self.i18n.t("random"),
-                       RandomPanel(self.settings, self.i18n, self.history))
-        self._register("probability", self.i18n.t("prob", "Probability"),
-                       ProbabilityPanel(self.settings, self.i18n, self.history))
-        self._register("bits", self.i18n.t("bits", "Bits"),
-                       BitsPanel(self.settings, self.i18n, self.history))
-        self._register("crypto_tools", self.i18n.t("crypto_tools", "Crypto Tools"),
-                       CryptoPanel(self.settings, self.i18n, self.history))
-        self._register("latex", self.i18n.t("latex_editor", "LaTeX Editor"),
-                       LatexEditorPanel(self.settings, self.i18n, self.history))
+        # ---- 用注册表注册面板 ----
+        ctx = _Ctx(
+            base_path=self.base_path,
+            settings=self.settings,
+            i18n=self.i18n,
+            history=self.history,
+            main_window=self,
+            reuse_handler=self._on_reuse_from_history,
+        )
+        for spec in all_panels():
+            try:
+                widget = spec.factory(ctx)
+                title = self.i18n.t(spec.title_key, spec.title_default)
+                self._register(spec.key, title, widget, spec.group)
+            except Exception as e:
+                log_exc(e, module=f"main_window.register:{spec.key}")
 
-        history_panel = HistoryPanel(self.history, self.i18n)
-        history_panel.set_reuse_handler(self._on_reuse_from_history)
-        self._register("history", self.i18n.t("history"), history_panel)
+        # ---- 构建树 ----
+        self._rebuild_tree()
+        self._apply_filter("")
 
-        self._register("settings", self.i18n.t("settings"),
-                       SettingsPanel(self.settings, self.i18n, self))
-
-        self._apply_saved_order()
-        self._apply_visibility()
-
+        # ---- 恢复上次模块 ----
         last = self.settings.get("last_module", "basic")
-        target_row = 0
-        for i in range(self.list.count()):
-            if self.list.item(i).data(Qt.UserRole) == last:
-                target_row = i
-                break
-        if target_row < self.list.count():
-            self.list.setCurrentRow(target_row)
+        if last in self._panels:
+            self.switch_to_key(last)
+        elif self._keys:
+            self.switch_to_key(self._keys[0])
 
         self._restore_layout()
         self.apply_theme()
 
-    def _register(self, key, title, widget):
-        item = QListWidgetItem(title)
-        item.setData(Qt.UserRole, key)
-        self.list.addItem(item)
+    def _register(self, key, title, widget, group="工具"):
         self._panels[key] = widget
         self._titles[key] = title
         self._keys.append(key)
+        self._panel_group[key] = group
         self.stack.addWidget(widget)
 
-    def _apply_saved_order(self):
-        saved = self.settings.get("module_order", [])
-        if not isinstance(saved, list) or not saved:
-            return
-        ordered = [k for k in saved if k in self._panels]
-        rest = [k for k in self._keys if k not in ordered]
-        final = ordered + rest
-        if final == self._keys or not final:
-            return
-        try:
-            self.list.clear()
-            while self.stack.count():
-                self.stack.removeWidget(self.stack.widget(0))
-            for k in final:
-                item = QListWidgetItem(self._titles[k])
-                item.setData(Qt.UserRole, k)
-                self.list.addItem(item)
-                self.stack.addWidget(self._panels[k])
-            self._keys = final
-        except Exception as e:
-            log_exc(e, module="main_window._apply_saved_order")
+    # ---------------- 树 ----------------
 
-    def _apply_visibility(self):
-        for i in range(self.list.count()):
-            item = self.list.item(i)
-            key = item.data(Qt.UserRole)
-            item.setHidden(not self.settings.is_module_visible(key))
+    def _default_groups(self):
+        return [(name, list(keys)) for name, keys in DEFAULT_GROUPS]
 
-    # ==================================================================
-    # 拖拽排序
-    # ==================================================================
+    def _load_groups(self):
+        raw = self.settings.get("module_groups")
+        groups = []
+        seen = set()
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                keys = [k for k in (item.get("keys") or [])
+                        if k in self._panels and k not in seen]
+                if name and keys:
+                    groups.append((name, keys))
+                    seen.update(keys)
+        if not groups:
+            groups = self._default_groups()
+            for _, keys in groups:
+                seen.update(keys)
+        unassigned = [k for k in self._keys if k not in seen]
+        if unassigned:
+            groups.append(("其他", unassigned))
+        return groups
 
-    def _on_rows_moved(self, *_):
-        try:
-            keys = [self.list.item(i).data(Qt.UserRole)
-                    for i in range(self.list.count())]
-            if not keys:
-                return
-            self._keys = keys
-            self.settings.set("module_order", keys, notify=False)
+    def _rebuild_tree(self):
+        expanded = {}
+        for i in range(self.tree.topLevelItemCount()):
+            p = self.tree.topLevelItem(i)
+            expanded[p.text(0)] = p.isExpanded()
 
-            current = self.stack.currentWidget()
-            while self.stack.count():
-                self.stack.removeWidget(self.stack.widget(0))
+        groups = self._load_groups()
+        self._panel_group = {k: n for n, keys in groups for k in keys}
+
+        self.tree.clear()
+        self._item_by_key.clear()
+
+        for name, keys in groups:
+            parent = QTreeWidgetItem([name])
+            parent.setFlags(
+                (parent.flags() | Qt.ItemIsDropEnabled) & ~Qt.ItemIsSelectable)
+            font = parent.font(0)
+            font.setBold(True)
+            parent.setFont(0, font)
+            self.tree.addTopLevelItem(parent)
             for k in keys:
-                self.stack.addWidget(self._panels[k])
-            if current is not None:
-                self.stack.setCurrentWidget(current)
-        except Exception as e:
-            log_exc(e, module="main_window._on_rows_moved")
+                child = QTreeWidgetItem([self._titles.get(k, k)])
+                child.setData(0, Qt.UserRole, k)
+                child.setFlags(child.flags() | Qt.ItemIsDragEnabled)
+                parent.addChild(child)
+                self._item_by_key[k] = child
+            parent.setExpanded(expanded.get(name, True))
 
-    # ==================================================================
-    # 交互
-    # ==================================================================
+    def _apply_filter(self, text):
+        text = (text or "").strip().lower()
+        for i in range(self.tree.topLevelItemCount()):
+            parent = self.tree.topLevelItem(i)
+            any_visible = False
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                key = child.data(0, Qt.UserRole)
+                title = child.text(0)
+                if not text:
+                    hidden = not self.settings.is_module_visible(key)
+                    child.setHidden(hidden)
+                    if not hidden:
+                        any_visible = True
+                else:
+                    s1 = _fuzzy_score(text, title)
+                    s2 = _fuzzy_score(text, str(key or ""))
+                    s3 = _fuzzy_score(text, parent.text(0))
+                    if max(s1, s2, s3) > 0:
+                        child.setHidden(False)
+                        any_visible = True
+                    else:
+                        child.setHidden(True)
+            parent.setHidden(not any_visible)
+            if text and any_visible:
+                parent.setExpanded(True)
+
+    def _on_tree_item_clicked(self, item, _col=0):
+        key = item.data(0, Qt.UserRole)
+        if key:
+            self.switch_to_key(key)
+        else:
+            item.setExpanded(not item.isExpanded())
+
+    def _on_tree_rows_moved(self, *_):
+        try:
+            groups = []
+            for i in range(self.tree.topLevelItemCount()):
+                parent = self.tree.topLevelItem(i)
+                keys = []
+                for j in range(parent.childCount()):
+                    k = parent.child(j).data(0, Qt.UserRole)
+                    if k:
+                        keys.append(k)
+                if keys:
+                    groups.append({"name": parent.text(0), "keys": keys})
+            self.settings.set("module_groups", groups, notify=False)
+        except Exception as e:
+            log_exc(e, module="main_window._on_tree_rows_moved")
+
+    # ---------------- 切换 ----------------
+
+    def switch_to_key(self, key):
+        widget = self._panels.get(key)
+        if widget is None:
+            return
+        self.stack.setCurrentWidget(widget)
+        try:
+            self.settings.set("last_module", key, notify=False)
+        except Exception:
+            pass
+        item = self._item_by_key.get(key)
+        if (item is not None and not item.isHidden()
+                and self.tree.currentItem() is not item):
+            self.tree.setCurrentItem(item)
+            self.tree.scrollToItem(item)
 
     def switch(self, idx):
         if 0 <= idx < self.stack.count():
-            self.stack.setCurrentIndex(idx)
-            if 0 <= idx < len(self._keys):
-                try:
-                    self.settings.set("last_module", self._keys[idx],
-                                      notify=False)
-                except Exception:
-                    pass
+            w = self.stack.widget(idx)
+            for k, v in self._panels.items():
+                if v is w:
+                    self.switch_to_key(k)
+                    break
+
+    def _visible_keys_in_order(self):
+        out = []
+        for i in range(self.tree.topLevelItemCount()):
+            parent = self.tree.topLevelItem(i)
+            if parent.isHidden():
+                continue
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                if child.isHidden():
+                    continue
+                k = child.data(0, Qt.UserRole)
+                if k:
+                    out.append(k)
+        return out
+
+    def _tree_keys(self):
+        out = []
+        for i in range(self.tree.topLevelItemCount()):
+            parent = self.tree.topLevelItem(i)
+            for j in range(parent.childCount()):
+                k = parent.child(j).data(0, Qt.UserRole)
+                if k:
+                    out.append(k)
+        return out
+
+    def _switch_by_key_pub(self, key):
+        if key not in self._panels:
+            return
+        try:
+            if not self.settings.is_module_visible(key):
+                self.settings.set_module_visible(key, True)
+                self._apply_filter(self.search_box.text())
+        except Exception:
+            pass
+        self.switch_to_key(key)
+
+    def _go_settings(self):
+        self._switch_by_key_pub("settings")
 
     def toggle_sidebar(self):
-        self.list.setVisible(not self.list.isVisible())
-        self.vis_btn.setVisible(self.list.isVisible())
+        self.tree.setVisible(not self.tree.isVisible())
+        self.search_box.setVisible(self.tree.isVisible())
+        self.vis_btn.setVisible(self.tree.isVisible())
+
+    # ---------------- 可见性 ----------------
+
+    def _apply_visibility(self):
+        self._apply_filter(self.search_box.text())
 
     def open_visibility_dialog(self):
         try:
-            current_keys = [self.list.item(i).data(Qt.UserRole)
-                            for i in range(self.list.count())]
+            current_keys = self._tree_keys()
+            for k in self._keys:
+                if k not in current_keys:
+                    current_keys.append(k)
+
             titles = {k: self._titles.get(k, k) for k in current_keys}
-            default_order = list(self._titles.keys())
             dlg = ModuleVisibilityDialog(
                 self.i18n,
                 current_order=current_keys,
-                default_order=default_order,
+                default_order=list(self._keys),
                 titles=titles,
                 visible_getter=self.settings.is_module_visible,
                 parent=self,
@@ -327,38 +421,47 @@ class MainWindow(QMainWindow):
             if dlg.exec() != QDialog.Accepted:
                 return
             order, vis = dlg.result_state()
-
-            self.settings.set("module_order", order, notify=False)
             for k, v in vis.items():
                 try:
                     self.settings.set_module_visible(k, v)
                 except Exception:
                     pass
-
-            self._apply_saved_order()
-            if order and order != self._keys:
-                try:
-                    self.list.clear()
-                    while self.stack.count():
-                        self.stack.removeWidget(self.stack.widget(0))
-                    for k in order:
-                        if k not in self._panels:
-                            continue
-                        item = QListWidgetItem(self._titles.get(k, k))
-                        item.setData(Qt.UserRole, k)
-                        self.list.addItem(item)
-                        self.stack.addWidget(self._panels[k])
-                    self._keys = [k for k in order if k in self._panels]
-                except Exception as e:
-                    log_exc(e, module="main_window.open_visibility_dialog.order")
-
+            self._reorder_tree_by_flat(order)
             self._apply_visibility()
         except Exception as e:
             log_exc(e, module="main_window.open_visibility_dialog")
 
-    # ==================================================================
-    # 历史复用
-    # ==================================================================
+    def _reorder_tree_by_flat(self, flat_order):
+        pos = {k: i for i, k in enumerate(flat_order)}
+        for i in range(self.tree.topLevelItemCount()):
+            parent = self.tree.topLevelItem(i)
+            children = []
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                k = child.data(0, Qt.UserRole)
+                children.append((pos.get(k, 9999), k, child))
+            children.sort(key=lambda x: (x[0], x[1]))
+            parent.takeChildren()
+            for _, _, child in children:
+                parent.addChild(child)
+
+        self._item_by_key = {}
+        for i in range(self.tree.topLevelItemCount()):
+            parent = self.tree.topLevelItem(i)
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                k = child.data(0, Qt.UserRole)
+                if k:
+                    self._item_by_key[k] = child
+
+    def _rebuild_tree_and_filter(self):
+        try:
+            self._rebuild_tree()
+            self._apply_filter(self.search_box.text())
+        except Exception as e:
+            log_exc(e, module="main_window._rebuild_tree_and_filter")
+
+    # ---------------- 历史复用 ----------------
 
     @staticmethod
     def _normalize_module_key(module):
@@ -373,23 +476,17 @@ class MainWindow(QMainWindow):
         return None
 
     def _on_reuse_from_history(self, module_key, expr):
-        """由 HistoryPanel 双击/右键复用触发。"""
         if not expr:
             return
         key = self._normalize_module_key(module_key)
         panel = self._panels.get(key) if key else None
         if panel is None:
-            # 兜底：直接复制到剪贴板
             try:
                 QApplication.clipboard().setText(expr)
             except Exception:
                 pass
             return
-
-        # 切到该面板
         self._switch_by_key_pub(key)
-
-        # 按优先级探测输入控件
         for attr in ("expr", "input", "data", "value", "d1",
                      "a", "enc_in", "cls_in"):
             w = getattr(panel, attr, None)
@@ -406,41 +503,30 @@ class MainWindow(QMainWindow):
                     return
             except Exception:
                 continue
-
-        # 面板没有明显输入控件：复制到剪贴板
         try:
             QApplication.clipboard().setText(expr)
         except Exception:
             pass
 
-    # ==================================================================
-    # 热重载
-    # ==================================================================
+    # ---------------- 热重载 ----------------
 
     def _on_settings_changed(self, key=None):
         try:
             if key == "language":
                 QTimer.singleShot(0, self.rebuild)
                 return
-
             if key is None:
                 if self.settings.get("language") != self.i18n.lang:
                     QTimer.singleShot(0, self.rebuild)
                     return
-                self._apply_visibility()
-
+                QTimer.singleShot(0, self._rebuild_tree_and_filter)
             if key == "visible_modules":
                 self._apply_visibility()
-            elif key == "module_order":
-                try:
-                    self._apply_saved_order()
-                except Exception as e:
-                    log_exc(e, module="main_window._apply_saved_order")
-
+            elif key == "module_groups":
+                QTimer.singleShot(0, self._rebuild_tree_and_filter)
             if key in (None, "theme", "font_family", "font_size",
                        "palette", "result_format"):
                 self.apply_theme()
-
             for p in self._panels.values():
                 fn = getattr(p, "on_settings_changed", None)
                 if callable(fn):
@@ -472,15 +558,12 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-    # ==================================================================
-    # 重建（语言切换）—— 用 shutdown_workers() 统一取消
-    # ==================================================================
+    # ---------------- 重建 ----------------
 
     def rebuild(self):
         try:
             self.i18n.load(self.settings.get("language", "zh_CN"))
 
-            # 1) 先取消所有面板的 Worker
             for w in list(self._panels.values()):
                 fn = getattr(w, "shutdown_workers", None)
                 if callable(fn):
@@ -489,7 +572,6 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
 
-            # 2) 再移除并销毁
             for w in list(self._panels.values()):
                 try:
                     self.stack.removeWidget(w)
@@ -503,7 +585,8 @@ class MainWindow(QMainWindow):
             self._panels.clear()
             self._keys.clear()
             self._titles.clear()
-            self.list.clear()
+            self._panel_group.clear()
+            self._item_by_key.clear()
 
             try:
                 self.removeDockWidget(self.dock)
@@ -535,9 +618,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="main_window.rebuild")
 
-    # ==================================================================
-    # 主题
-    # ==================================================================
+    # ---------------- 主题 ----------------
 
     def _resolve_theme(self) -> str:
         theme = self.settings.get("theme", "dark")
@@ -545,8 +626,7 @@ class MainWindow(QMainWindow):
             return theme
         try:
             hints = QGuiApplication.styleHints()
-            scheme = hints.colorScheme()
-            if scheme == Qt.ColorScheme.Light:
+            if hints.colorScheme() == Qt.ColorScheme.Light:
                 return "light"
         except Exception:
             pass
@@ -562,116 +642,69 @@ class MainWindow(QMainWindow):
             accent = pal.get("accent", "#007acc")
             border = pal.get("border", "#3f3f46")
             hover = pal.get("hover", "#3a3d41")
-
             family = self.settings.get("font_family", "Microsoft YaHei")
             size = int(self.settings.get("font_size", 11))
 
             self.setStyleSheet(f"""
             QMainWindow, QWidget {{
-                background: {bg};
-                color: {fg};
-                font-family: '{family}';
-                font-size: {size}pt;
+                background: {bg}; color: {fg};
+                font-family: '{family}'; font-size: {size}pt;
             }}
-            QDockWidget {{
-                color: {fg};
-                titlebar-close-icon: none;
-                titlebar-normal-icon: none;
-            }}
+            QDockWidget {{ color: {fg}; }}
             QDockWidget::title {{
-                background: {panel};
-                padding: 6px;
-                border: 1px solid {border};
+                background: {panel}; padding: 6px; border: 1px solid {border};
             }}
             QLineEdit, QPlainTextEdit, QTextEdit, QComboBox,
             QSpinBox, QDoubleSpinBox {{
-                background: {panel};
-                color: {fg};
-                border: 1px solid {border};
-                padding: 5px;
+                background: {panel}; color: {fg};
+                border: 1px solid {border}; padding: 5px;
                 border-radius: 4px;
                 selection-background-color: {accent};
             }}
             QPushButton {{
-                background: {panel};
-                color: {fg};
-                border: 1px solid {border};
-                padding: 6px 10px;
+                background: {panel}; color: {fg};
+                border: 1px solid {border}; padding: 6px 10px;
                 border-radius: 4px;
             }}
-            QPushButton:hover {{
-                background: {accent};
-                color: #ffffff;
-            }}
-            QPushButton:pressed {{
-                background: {hover};
-            }}
-            QPushButton:disabled {{
-                color: #888888;
-            }}
-            QListWidget {{
-                background: {panel};
-                color: {fg};
-                border: 1px solid {border};
-                border-radius: 4px;
+            QPushButton:hover {{ background: {accent}; color: #ffffff; }}
+            QPushButton:pressed {{ background: {hover}; }}
+            QPushButton:disabled {{ color: #888888; }}
+            QTreeWidget, QListWidget {{
+                background: {panel}; color: {fg};
+                border: 1px solid {border}; border-radius: 4px;
                 outline: none;
             }}
-            QListWidget::item {{
-                padding: 8px 10px;
+            QTreeWidget::item, QListWidget::item {{ padding: 5px 8px; }}
+            QTreeWidget::item:selected, QListWidget::item:selected {{
+                background: {accent}; color: #ffffff;
             }}
-            QListWidget::item:selected {{
-                background: {accent};
-                color: #ffffff;
-            }}
-            QListWidget::item:hover {{
+            QTreeWidget::item:hover, QListWidget::item:hover {{
                 background: {hover};
             }}
             QTabWidget::pane {{
-                border: 1px solid {border};
-                border-radius: 4px;
+                border: 1px solid {border}; border-radius: 4px;
             }}
             QTabBar::tab {{
-                background: {panel};
-                color: {fg};
-                border: 1px solid {border};
-                padding: 6px 14px;
+                background: {panel}; color: {fg};
+                border: 1px solid {border}; padding: 6px 14px;
             }}
-            QTabBar::tab:selected {{
-                background: {accent};
-                color: #ffffff;
-            }}
+            QTabBar::tab:selected {{ background: {accent}; color: #ffffff; }}
             QHeaderView::section {{
-                background: {panel};
-                color: {fg};
-                border: 1px solid {border};
-                padding: 5px;
+                background: {panel}; color: {fg};
+                border: 1px solid {border}; padding: 5px;
             }}
             QTableWidget {{
-                background: {panel};
-                color: {fg};
-                gridline-color: {border};
-                border: 1px solid {border};
+                background: {panel}; color: {fg};
+                gridline-color: {border}; border: 1px solid {border};
             }}
-            QCheckBox, QLabel {{
-                background: transparent;
-                color: {fg};
-            }}
-            QSplitter::handle {{
-                background: {border};
-            }}
-            QScrollArea {{
-                border: none;
-                background: {panel};
-            }}
+            QCheckBox, QLabel {{ background: transparent; color: {fg}; }}
+            QSplitter::handle {{ background: {border}; }}
+            QScrollArea {{ border: none; background: {panel}; }}
             QMenu {{
-                background: {panel};
-                color: {fg};
+                background: {panel}; color: {fg};
                 border: 1px solid {border};
             }}
-            QMenu::item:selected {{
-                background: {accent};
-                color: #ffffff;
-            }}
+            QMenu::item:selected {{ background: {accent}; color: #ffffff; }}
             """)
 
             for lbl in self.findChildren(LatexLabel):
@@ -679,7 +712,6 @@ class MainWindow(QMainWindow):
                     lbl.set_color(fg)
                 except Exception:
                     pass
-
             for p in self._panels.values():
                 fn = getattr(p, "set_theme_colors", None)
                 if callable(fn):
@@ -690,9 +722,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="main_window.apply_theme")
 
-    # ==================================================================
-    # 工作区布局持久化
-    # ==================================================================
+    # ---------------- 布局 ----------------
 
     def _save_layout(self):
         try:
@@ -701,7 +731,7 @@ class MainWindow(QMainWindow):
             self.settings.set("workspace_layout", {
                 "dock_area": area,
                 "dock_visible": self.dock.isVisible(),
-                "list_visible": self.list.isVisible(),
+                "list_visible": self.tree.isVisible(),
                 "window_state": base64.b64encode(self.saveState()).decode("ascii"),
             }, notify=False)
         except Exception as e:
@@ -720,7 +750,8 @@ class MainWindow(QMainWindow):
             if "dock_visible" in layout:
                 self.dock.setVisible(bool(layout["dock_visible"]))
             if "list_visible" in layout:
-                self.list.setVisible(bool(layout["list_visible"]))
+                self.tree.setVisible(bool(layout["list_visible"]))
+                self.search_box.setVisible(bool(layout["list_visible"]))
                 self.vis_btn.setVisible(bool(layout["list_visible"]))
             if "window_state" in layout and layout["window_state"]:
                 try:
@@ -730,9 +761,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="main_window._restore_layout")
 
-    # ==================================================================
-    # 菜单
-    # ==================================================================
+    # ---------------- 菜单 ----------------
 
     def _build_menu(self):
         bar = self.menuBar()
@@ -776,18 +805,20 @@ class MainWindow(QMainWindow):
         a_tray.triggered.connect(self._toggle_tray)
         m_tools.addAction(a_tray)
 
-    # ==================================================================
-    # 命令面板
-    # ==================================================================
+    # ---------------- 命令面板 ----------------
 
     def _collect_commands(self):
         cmds = []
-        for i in range(self.list.count()):
-            item = self.list.item(i)
-            key = item.data(Qt.UserRole)
-            title = item.text()
-            cmds.append((f"{self.i18n.t('go_to', 'Go to')}: {title}",
-                         (lambda k=key: self._switch_by_key_pub(k))))
+        for i in range(self.tree.topLevelItemCount()):
+            parent = self.tree.topLevelItem(i)
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                key = child.data(0, Qt.UserRole)
+                if key:
+                    cmds.append((
+                        f"{self.i18n.t('go_to', 'Go to')}: {child.text(0)}",
+                        lambda k=key: self._switch_by_key_pub(k)))
+
         cmds.append((self.i18n.t("settings"), self._go_settings))
         cmds.append((self.i18n.t("module_visibility", "Modules"),
                      self.open_visibility_dialog))
@@ -795,42 +826,79 @@ class MainWindow(QMainWindow):
                      self.open_current_in_split))
         cmds.append((self.i18n.t("close_split", "Close split"),
                      self.close_split))
-        cmds.append((self.i18n.t("check_update", "Check for updates"),
-                     self._check_update))
+
+        # 主题
+        for name, info in self.settings.themes().items():
+            cmds.append((f"theme: {info.get('label', name)}",
+                         lambda x=name: self.settings.set("theme", x)))
+        cmds.append(("theme: system",
+                     lambda: self.settings.set("theme", "system")))
+
+        cmds.append(("check update", self._check_update))
+        cmds.append(("clear history", self._clear_history_cmd))
+        cmds.append(("refresh rates", self._refresh_rates_cmd))
+        cmds.append(("import settings", self._import_settings_cmd))
+        cmds.append(("export settings", self._export_settings_cmd))
         cmds.append((self.i18n.t("toggle_tray", "Toggle tray"),
                      self._toggle_tray))
         cmds.append((self.i18n.t("reset", "Reset settings"),
                      lambda: self.settings.reset()))
         return cmds
 
+    def _clear_history_cmd(self):
+        try:
+            self.history.clear()
+        except Exception as e:
+            log_exc(e, module="MainWindow._clear_history_cmd")
+
+    def _refresh_rates_cmd(self):
+        try:
+            panel = self._panels.get("currency")
+            if panel and hasattr(panel, "_refresh_async"):
+                panel._refresh_async(force=True)
+        except Exception as e:
+            log_exc(e, module="MainWindow._refresh_rates_cmd")
+
+    def _import_settings_cmd(self):
+        try:
+            panel = self._panels.get("settings")
+            if panel and hasattr(panel, "_import"):
+                panel._import()
+        except Exception as e:
+            log_exc(e, module="MainWindow._import_settings_cmd")
+
+    def _export_settings_cmd(self):
+        try:
+            panel = self._panels.get("settings")
+            if panel and hasattr(panel, "_export"):
+                panel._export()
+        except Exception as e:
+            log_exc(e, module="MainWindow._export_settings_cmd")
+
+    def _palette_history(self, query, limit=10):
+        try:
+            return self.history.list(search=query, limit=int(limit))
+        except Exception:
+            return []
+
+    def _palette_calc(self, expr):
+        return engine.basic_calc_smart(expr)
+
     def open_command_palette(self):
         try:
-            dlg = CommandPalette(self.i18n, self._collect_commands(), self)
+            dlg = CommandPalette(
+                self.i18n,
+                self._collect_commands(),
+                self,
+                history_search=self._palette_history,
+                calc=self._palette_calc,
+                reuse_handler=self._on_reuse_from_history,
+            )
             dlg.exec()
         except Exception as e:
             log_exc(e, module="MainWindow.open_command_palette")
 
-    def _switch_by_key_pub(self, key):
-        for i in range(self.list.count()):
-            if self.list.item(i).data(Qt.UserRole) == key:
-                self.list.setCurrentRow(i)
-                return
-        try:
-            self.settings.set_module_visible(key, True)
-            self._apply_visibility()
-            for i in range(self.list.count()):
-                if self.list.item(i).data(Qt.UserRole) == key:
-                    self.list.setCurrentRow(i)
-                    return
-        except Exception:
-            pass
-
-    def _go_settings(self):
-        self._switch_by_key_pub("settings")
-
-    # ==================================================================
-    # 分屏
-    # ==================================================================
+    # ---------------- 分屏 ----------------
 
     def _ensure_split(self):
         if self._split is None:
@@ -844,16 +912,14 @@ class MainWindow(QMainWindow):
 
     def open_current_in_split(self):
         try:
-            key = None
-            if self._keys and 0 <= self.stack.currentIndex() < len(self._keys):
-                key = self._keys[self.stack.currentIndex()]
-            if not key:
-                return
-            panel = self._panels.get(key)
-            if panel is None:
-                return
-            sp = self._ensure_split()
-            sp.show_panel(panel)
+            current = self.stack.currentWidget()
+            for k, w in self._panels.items():
+                if w is current:
+                    panel = self._panels.get(k)
+                    if panel is not None:
+                        sp = self._ensure_split()
+                        sp.show_panel(panel)
+                    return
         except Exception as e:
             log_exc(e, module="MainWindow.open_current_in_split")
 
@@ -871,9 +937,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="MainWindow.close_split")
 
-    # ==================================================================
-    # 更新 / 插件 / 托盘
-    # ==================================================================
+    # ---------------- 更新 / 插件 / 托盘 ----------------
 
     def _check_update(self):
         try:
@@ -941,9 +1005,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    # ==================================================================
-    # 关闭：冲刷草稿 + 保存几何
-    # ==================================================================
+    # ---------------- 关闭 ----------------
 
     def closeEvent(self, event):
         try:
@@ -964,12 +1026,14 @@ class MainWindow(QMainWindow):
                 notify=False)
             self.settings.set(
                 "window_size", [self.width(), self.height()], notify=False)
-            if self._keys and 0 <= self.stack.currentIndex() < len(self._keys):
-                self.settings.set(
-                    "last_module", self._keys[self.stack.currentIndex()],
-                    notify=False)
+
+            current = self.stack.currentWidget()
+            for k, w in self._panels.items():
+                if w is current:
+                    self.settings.set("last_module", k, notify=False)
+                    break
+
             self._save_layout()
-            # 冲刷草稿写盘
             try:
                 self.settings.flush()
             except Exception:

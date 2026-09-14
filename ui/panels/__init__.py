@@ -1,4 +1,4 @@
-"""所有面板的统一入口（保持 from ui.panels import X 兼容）。"""
+"""所有面板的统一入口。"""
 from .basic import BasicPanel
 from .scientific import ScientificPanel
 from .unit import UnitPanel
@@ -17,6 +17,11 @@ from .crypto_tools import CryptoPanel
 from .latex_editor import LatexEditorPanel
 from .history import HistoryPanel
 from .settings import SettingsPanel
+from .data_table import DataTablePanel
+from .tools import ToolsPanel
+from .snippets import SnippetsPanel
+from .timer_panel import TimerPanel
+from .clipboard_history import ClipboardHistoryPanel
 
 __all__ = [
     "BasicPanel", "ScientificPanel", "UnitPanel", "CurrencyPanel",
@@ -24,4 +29,6 @@ __all__ = [
     "FinancePanel", "DatePanel", "RandomPanel", "ProbabilityPanel",
     "BitsPanel", "CryptoPanel", "LatexEditorPanel", "HistoryPanel",
     "SettingsPanel",
+    "DataTablePanel", "ToolsPanel", "SnippetsPanel", "TimerPanel",
+    "ClipboardHistoryPanel",
 ]

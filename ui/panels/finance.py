@@ -36,6 +36,10 @@ class FinancePanel(CalcPanel):
         tabs.addTab(self._build_compare_tab(), i18n.t("compare_plans", "Compare"))
         tabs.addTab(self._build_tvm_tab(), "TVM")
         tabs.addTab(self._build_depr_tab(), i18n.t("depreciation", "Depreciation"))
+        tabs.addTab(self._build_bond_tab(), i18n.t("bond", "债券"))
+        tabs.addTab(self._build_option_tab(), i18n.t("option", "期权"))
+        tabs.addTab(self._build_tax_tab(), i18n.t("tax", "个税"))
+        tabs.addTab(self._build_xirr_tab(), "XIRR")
 
         main = QVBoxLayout(self)
         main.addWidget(tabs)
@@ -279,3 +283,150 @@ class FinancePanel(CalcPanel):
             self.add_history("depr", s, module="finance-depr")
         except Exception as e:
             self.result.setPlainText(friendly_error(self.i18n, e, "finance"))
+
+    def _build_bond_tab(self):
+        self.b_face = QLineEdit("1000")
+        self.b_coupon = QLineEdit("5")
+        self.b_years = QLineEdit("10")
+        self.b_ytm = QLineEdit("4")
+        self.b_freq = QLineEdit("2")
+        b1 = QPushButton(self.i18n.t("calc", "计算价格"))
+        b2 = QPushButton(self.i18n.t("calc_ytm", "由价格求 YTM"))
+        b1.clicked.connect(self.bond_price)
+        b2.clicked.connect(self.bond_ytm)
+        w = QWidget(); f = QFormLayout(w)
+        f.addRow(QLabel("Face"), self.b_face)
+        f.addRow(QLabel("Coupon %"), self.b_coupon)
+        f.addRow(QLabel("Years"), self.b_years)
+        f.addRow(QLabel("YTM %"), self.b_ytm)
+        f.addRow(QLabel("Freq"), self.b_freq)
+        r = QHBoxLayout()
+        r.addWidget(b1); r.addWidget(b2)
+        f.addRow(r)
+        return w
+
+    def bond_price(self):
+        try:
+            from core import bonds
+            r = bonds.bond_price(
+                self.b_face.text(), self.b_coupon.text(),
+                self.b_years.text(), self.b_ytm.text(),
+                int(self.b_freq.text() or "1"))
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history("bond-price", s, module="finance-bond")
+        except Exception as e:
+            self.result.setPlainText(friendly_error(self.i18n, e, "finance"))
+
+    def bond_ytm(self):
+        try:
+            from core import bonds
+            r = bonds.bond_ytm(
+                self.b_face.text(), self.b_coupon.text(),
+                self.b_years.text(), self.b_face.text(),
+                int(self.b_freq.text() or "1"))
+            self.result.setPlainText(f"YTM = {r:.4f}%")
+        except Exception as e:
+            self.result.setPlainText(friendly_error(self.i18n, e, "finance"))
+
+    # ---------------- 期权 ----------------
+
+    def _build_option_tab(self):
+        self.o_s = QLineEdit("100")
+        self.o_k = QLineEdit("100")
+        self.o_t = QLineEdit("1")
+        self.o_r = QLineEdit("5")
+        self.o_sigma = QLineEdit("20")
+        self.o_kind = QComboBox()
+        self.o_kind.addItem("call", "call")
+        self.o_kind.addItem("put", "put")
+        b = QPushButton(self.i18n.t("calc", "计算"))
+        b.clicked.connect(self.option_calc)
+        w = QWidget(); f = QFormLayout(w)
+        f.addRow(QLabel("Spot"), self.o_s)
+        f.addRow(QLabel("Strike"), self.o_k)
+        f.addRow(QLabel("T (years)"), self.o_t)
+        f.addRow(QLabel("r %"), self.o_r)
+        f.addRow(QLabel("sigma %"), self.o_sigma)
+        f.addRow(QLabel("Kind"), self.o_kind)
+        f.addRow(b)
+        return w
+
+    def option_calc(self):
+        try:
+            from core import options
+            r = options.black_scholes(
+                self.o_s.text(), self.o_k.text(), self.o_t.text(),
+                self.o_r.text(), self.o_sigma.text(),
+                self.o_kind.currentData())
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history("bs", s, module="finance-option")
+        except Exception as e:
+            self.result.setPlainText(friendly_error(self.i18n, e, "finance"))
+
+    # ---------------- 个税 ----------------
+
+    def _build_tax_tab(self):
+        self.t_country = QComboBox()
+        self.t_country.addItem("中国", "CN")
+        self.t_country.addItem("美国 (单身)", "US-single")
+        self.t_country.addItem("美国 (已婚)", "US-married")
+        self.t_salary = QLineEdit("20000")
+        self.t_si = QLineEdit("3000")
+        self.t_sd = QLineEdit("1000")
+        self.t_months = QLineEdit("1")
+        b = QPushButton(self.i18n.t("calc", "计算"))
+        b.clicked.connect(self.tax_calc)
+        w = QWidget(); f = QFormLayout(w)
+        f.addRow(QLabel("Country"), self.t_country)
+        f.addRow(QLabel("月薪 / 年薪"), self.t_salary)
+        f.addRow(QLabel("三险一金 / 扣除"), self.t_si)
+        f.addRow(QLabel("专项附加 / 已工作月"), self.t_sd)
+        f.addRow(QLabel("月数"), self.t_months)
+        f.addRow(b)
+        return w
+
+    def tax_calc(self):
+        try:
+            from core import tax
+            c = self.t_country.currentData()
+            if c == "CN":
+                r = tax.cn_income_tax(
+                    self.t_salary.text(), self.t_si.text(),
+                    self.t_sd.text(), int(self.t_months.text() or "1"))
+            else:
+                r = tax.us_federal_tax(
+                    self.t_salary.text(),
+                    filing="married" if "married" in c else "single")
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history(c, s, module="finance-tax")
+        except Exception as e:
+            self.result.setPlainText(friendly_error(self.i18n, e, "finance"))
+
+    # ---------------- XIRR ----------------
+
+    def _build_xirr_tab(self):
+        self.x_cfs = QLineEdit("-1000, 200, 300, 500, 400")
+        self.x_dates = QLineEdit(
+            "2024-01-01, 2024-06-01, 2024-12-01, 2025-06-01, 2025-12-01")
+        b = QPushButton("XIRR")
+        b.clicked.connect(self.xirr_calc)
+        w = QWidget(); f = QFormLayout(w)
+        f.addRow(QLabel("Cashflows"), self.x_cfs)
+        f.addRow(QLabel("Dates (ISO)"), self.x_dates)
+        f.addRow(b)
+        return w
+
+    def xirr_calc(self):
+        try:
+            from core import finance as fin
+            cfs = [float(x) for x in self.x_cfs.text().split(",")]
+            dates = [d.strip() for d in self.x_dates.text().split(",")]
+            r = fin.xirr(cfs, dates)
+            self.result.setPlainText(f"XIRR = {r:.4f}%")
+            self.add_history("xirr", f"{r:.4f}%", module="finance-xirr")
+        except Exception as e:
+            self.result.setPlainText(friendly_error(self.i18n, e, "finance"))
+

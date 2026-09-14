@@ -1,18 +1,33 @@
-"""基础计算面板：百分比 / 折扣 / 小费 / 税 + 内存槽 M1–M9。"""
+"""基础计算面板：键盘驱动 + 百分比模板 + 内存槽 + 耗时显示。"""
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
-    QHBoxLayout, QGridLayout, QComboBox, QWidget,
+    QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QComboBox, QWidget,
 )
 
 from core import engine
 from core.errors import InputError
 from core.logger import log_exc
 from ui.shortcuts import install_panel_shortcuts
-from ._common import _clear_layout, friendly_error
+from ._common import _clear_layout, friendly_error, ResultView
 from .base import CalcPanel
+
+
+class _CalcLineEdit(QLineEdit):
+    """'=' 键直接输入 '+'（无需 Shift）。"""
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        mods = event.modifiers()
+        if key == Qt.Key_Equal and not (mods & Qt.ShiftModifier):
+            self.insert("+")
+            return
+        super().keyPressEvent(event)
 
 
 class BasicPanel(CalcPanel):
@@ -20,18 +35,16 @@ class BasicPanel(CalcPanel):
 
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
+        self._calc_start = None
 
         self.memory = 0.0
         self.mem_slots = {i: 0.0 for i in range(1, 10)}
 
-        self.expr = QLineEdit()
+        self.expr = _CalcLineEdit()
         self.expr.setText(settings.get_draft("basic_expr", ""))
         self.expr.textChanged.connect(
             lambda t: settings.set_draft("basic_expr", t))
         self.expr.returnPressed.connect(self.calc)
-
-        self.result = QPlainTextEdit()
-        self.result.setReadOnly(True)
 
         self.fmt_mode = QComboBox()
         self.fmt_mode.addItem(i18n.t("fmt_auto", "Auto"), "auto")
@@ -80,9 +93,16 @@ class BasicPanel(CalcPanel):
         top.addStretch(1)
         top.addWidget(self.fmt_mode)
 
+        self.hint = QLabel("")
+        self.hint.setStyleSheet("color: #888; padding-left: 2px;")
+        self._update_hint()
+
+        self.result = ResultView(i18n)
+
         main = QVBoxLayout(self)
         main.addLayout(top)
         main.addWidget(self.expr)
+        main.addWidget(self.hint)
         main.addWidget(self.btn_box)
         main.addWidget(QLabel(i18n.t(
             "memory_hint",
@@ -101,6 +121,13 @@ class BasicPanel(CalcPanel):
             history_getter=self._history_exprs,
         )
 
+        sc = QShortcut(QKeySequence(Qt.Key_Escape), self.expr)
+        sc.setContext(Qt.WidgetShortcut)
+        sc.activated.connect(self._clear)
+        self._esc_sc = sc
+
+        self.expr.textChanged.connect(self._update_hint)
+
     # ---------------- 内存槽 ----------------
 
     def _mem_pick(self, k):
@@ -113,13 +140,13 @@ class BasicPanel(CalcPanel):
         try:
             v = self.current_result()
             self.mem_slots[k] = v
-            self.result.appendPlainText(f"M{k} ← {v}")
+            self.result.text.appendPlainText(f"M{k} ← {v}")
         except Exception:
             pass
 
     def current_result(self):
         try:
-            return float(self.result.toPlainText().splitlines()[-1])
+            return float(self.result.text.toPlainText().splitlines()[-1])
         except Exception:
             return 0.0
 
@@ -157,15 +184,15 @@ class BasicPanel(CalcPanel):
     def on_button(self, t):
         if t == "C":
             self.expr.clear()
-            self.result.clear()
+            self.result.show_result("", "")
         elif t == "=":
             self.calc()
         elif t == "M+":
             self.memory += self.current_result()
-            self.result.appendPlainText(f"M+ {self.memory}")
+            self.result.text.appendPlainText(f"M+ {self.memory}")
         elif t == "M-":
             self.memory -= self.current_result()
-            self.result.appendPlainText(f"M- {self.memory}")
+            self.result.text.appendPlainText(f"M- {self.memory}")
         elif t == "MR":
             self.expr.insert(str(self.memory))
         elif t == "MC":
@@ -193,6 +220,28 @@ class BasicPanel(CalcPanel):
             self.expr.setText(f"tip 15% on {cur or '100'}")
         elif kind == "tax":
             self.expr.setText(f"tax 13% on {cur or '100'}")
+        self.expr.setFocus()
+        self.expr.selectAll()
+
+    # ---------------- 历史提示 ----------------
+
+    def _update_hint(self, *_):
+        try:
+            cur = self.expr.text().strip()
+            if not cur or len(cur) < 2:
+                self.hint.setText("")
+                return
+            rows = self.history.list(module="basic", search=cur,
+                                     limit=3, order="id DESC")
+            matches = [r["expr"] for r in rows if r.get("expr")]
+            if not matches:
+                self.hint.setText("")
+                return
+            self.hint.setText(
+                self.i18n.t("recent_matches", "最近") + ": "
+                + "   ".join(matches[:3]))
+        except Exception:
+            self.hint.setText("")
 
     # ---------------- 计算 ----------------
 
@@ -206,20 +255,18 @@ class BasicPanel(CalcPanel):
     def _clear(self):
         try:
             self.expr.clear()
-            self.result.clear()
+            self.result.show_result("", "")
         except Exception:
             pass
 
     def calc(self):
         expr = self.expr.text()
         if not expr.strip():
-            self.result.appendPlainText(
-                friendly_error(self.i18n,
-                               InputError("表达式为空",
-                                          friendly_key="err_empty_expr"),
-                               "basic"))
+            self.result.show_error(
+                InputError("表达式为空", friendly_key="err_empty_expr"))
             return
-        self.result.appendPlainText(self.i18n.t("running", "Running…"))
+        self.result.show_result(self.i18n.t("running", "Running…"), "")
+        self._calc_start = time.time()
         self.run(
             engine.basic_calc_smart, expr,
             cancel_btn=self.cancel_btn,
@@ -254,12 +301,19 @@ class BasicPanel(CalcPanel):
         else:
             value, desc = result, None
         text = self._apply_format(value, desc)
-        self.result.appendPlainText(text)
+        elapsed = None
+        if self._calc_start is not None:
+            elapsed = time.time() - self._calc_start
+        self.result.show_result(text, "", elapsed=elapsed)
         self.add_history(self.expr.text(), text, module="basic")
+        self._update_hint()
 
     def _on_fail(self, e):
-        self.result.appendPlainText(friendly_error(self.i18n, e, "basic"))
+        elapsed = None
+        if self._calc_start is not None:
+            elapsed = time.time() - self._calc_start
+        self.result.show_error(e, elapsed=elapsed, retry_cb=self.calc)
 
     def _on_cancel(self):
-        self.result.appendPlainText(
-            self.i18n.t("err_cancelled_task", "Calculation cancelled"))
+        self.result.show_result(
+            self.i18n.t("err_cancelled_task", "Calculation cancelled"), "")

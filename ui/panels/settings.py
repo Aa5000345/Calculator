@@ -1,4 +1,4 @@
-"""设置面板。"""
+"""设置面板：语言 / 主题（含主题编辑器）/ 字体 / 结果格式 / 汇率源 / 按钮布局 / 配色 / 导入导出。"""
 from __future__ import annotations
 
 import json
@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QFormLayout, QComboBox, QSpinBox, QCheckBox, QFontComboBox,
-    QColorDialog, QFileDialog, QMessageBox,
+    QColorDialog, QFileDialog, QMessageBox, QWidget,
 )
 
 from core import rates as rates_mod
@@ -23,26 +23,29 @@ class SettingsPanel(CalcPanel):
         super().__init__(settings, i18n, history=None)
         self.main_window = main_window
 
+        # ---------------- 语言 ----------------
         self.lang = QComboBox()
         self.lang.addItems(["zh_CN", "en_US"])
         self.lang.setCurrentText(settings.get("language", "zh_CN"))
 
+        # ---------------- 主题 ----------------
         self.theme = QComboBox()
-        self.theme.addItem(i18n.t("theme_dark", "Dark"), "dark")
-        self.theme.addItem(i18n.t("theme_light", "Light"), "light")
-        self.theme.addItem(i18n.t("theme_system", "Follow system"), "system")
-        self.theme.addItem(i18n.t("theme_hc", "High contrast"), "high_contrast")
-        cur_theme = settings.get("theme", "dark")
-        idx = self.theme.findData(cur_theme)
-        self.theme.setCurrentIndex(idx if idx >= 0 else 0)
+        self.theme_edit_btn = QPushButton(i18n.t("edit_theme", "编辑主题…"))
+        self.theme_edit_btn.clicked.connect(self._open_theme_editor)
+        self._refresh_theme_combo()
+        self.theme.currentIndexChanged.connect(
+            lambda _: self.settings.set("theme", self.theme.currentData()))
 
+        # ---------------- 字体 ----------------
         self.font = QFontComboBox()
-        self.font.setCurrentFont(QFont(settings.get("font_family", "Microsoft YaHei")))
+        self.font.setCurrentFont(
+            QFont(settings.get("font_family", "Microsoft YaHei")))
 
         self.size = QSpinBox()
         self.size.setRange(8, 30)
         self.size.setValue(int(settings.get("font_size", 11)))
 
+        # ---------------- 结果格式 ----------------
         self.fmt = QComboBox()
         self.fmt.addItems(["text", "unicode", "latex"])
         self.fmt.setCurrentText(settings.get("result_format", "text"))
@@ -51,25 +54,34 @@ class SettingsPanel(CalcPanel):
         self.digits.setRange(0, 20)
         self.digits.setSpecialValueText(i18n.t("auto", "Auto"))
         self.digits.setValue(int(settings.get("result_digits", 0)))
+
         self.sci = QCheckBox(i18n.t("result_sci", "Scientific notation"))
         self.sci.setChecked(bool(settings.get("result_sci", False)))
+
         self.fraction = QCheckBox(i18n.t("result_fraction", "Show as fraction"))
         self.fraction.setChecked(bool(settings.get("result_fraction", False)))
+
         self.percent = QCheckBox(i18n.t("result_percent", "Show as percent"))
         self.percent.setChecked(bool(settings.get("result_percent", False)))
 
+        # ---------------- 汇率源 ----------------
         self.source = QComboBox()
-        for s in rates_mod.list_sources():
-            self.source.addItem(s.label, s.name)
+        try:
+            for s in rates_mod.list_sources():
+                self.source.addItem(s.label, s.name)
+        except Exception as e:
+            log_exc(e, module="SettingsPanel.init.rates")
         default_src = settings.get("currency_source", "open.er-api.com")
         idx = self.source.findData(default_src)
         if idx >= 0:
             self.source.setCurrentIndex(idx)
 
+        # ---------------- 按钮布局 ----------------
         self.layout_edit = QPlainTextEdit(
             json.dumps(settings.get("button_layout", []), ensure_ascii=False))
         self.layout_edit.setFixedHeight(110)
 
+        # ---------------- 配色 ----------------
         self.pal_btns = {}
         for key in ("bg", "fg", "panel", "accent", "border", "hover"):
             b = QPushButton(i18n.t(f"palette_{key}", key))
@@ -79,29 +91,44 @@ class SettingsPanel(CalcPanel):
         for b in self.pal_btns.values():
             pal_row.addWidget(b)
 
-        btn_apply = QPushButton(i18n.t("apply", "Apply")); btn_apply.clicked.connect(self.apply)
-        btn_reset = QPushButton(i18n.t("reset", "Reset")); btn_reset.clicked.connect(self.reset)
-        btn_export = QPushButton(i18n.t("export", "Export")); btn_export.clicked.connect(self._export)
-        btn_import = QPushButton(i18n.t("import", "Import")); btn_import.clicked.connect(self._import)
-        btn_vis = QPushButton(i18n.t("module_visibility", "Modules")); btn_vis.clicked.connect(self._edit_visibility)
+        # ---------------- 按钮行 ----------------
+        btn_apply = QPushButton(i18n.t("apply", "Apply"))
+        btn_apply.clicked.connect(self.apply)
+        btn_reset = QPushButton(i18n.t("reset", "Reset"))
+        btn_reset.clicked.connect(self.reset)
+        btn_export = QPushButton(i18n.t("export", "Export"))
+        btn_export.clicked.connect(self._export)
+        btn_import = QPushButton(i18n.t("import", "Import"))
+        btn_import.clicked.connect(self._import)
+        btn_vis = QPushButton(i18n.t("module_visibility", "Modules"))
+        btn_vis.clicked.connect(self._edit_visibility)
 
-        self.theme.currentIndexChanged.connect(
-            lambda _: self.settings.set("theme", self.theme.currentData()))
+        # ---------------- 实时监听 ----------------
         self.font.currentFontChanged.connect(
             lambda f: self.settings.set("font_family", f.family()))
-        self.size.valueChanged.connect(lambda v: self.settings.set("font_size", v))
-        self.digits.valueChanged.connect(lambda v: self.settings.set("result_digits", v))
+        self.size.valueChanged.connect(
+            lambda v: self.settings.set("font_size", v))
+        self.digits.valueChanged.connect(
+            lambda v: self.settings.set("result_digits", v))
         self.sci.stateChanged.connect(
             lambda _: self.settings.set("result_sci", self.sci.isChecked()))
         self.fraction.stateChanged.connect(
-            lambda _: self.settings.set("result_fraction", self.fraction.isChecked()))
+            lambda _: self.settings.set(
+                "result_fraction", self.fraction.isChecked()))
         self.percent.stateChanged.connect(
-            lambda _: self.settings.set("result_percent", self.percent.isChecked()))
+            lambda _: self.settings.set(
+                "result_percent", self.percent.isChecked()))
 
+        # ---------------- 布局 ----------------
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
         form.addRow(QLabel(i18n.t("language")), self.lang)
-        form.addRow(QLabel(i18n.t("theme")), self.theme)
+
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(self.theme, 1)
+        theme_row.addWidget(self.theme_edit_btn)
+        form.addRow(QLabel(i18n.t("theme")), theme_row)
+
         form.addRow(QLabel(i18n.t("font")), self.font)
         form.addRow(QLabel(i18n.t("font_size")), self.size)
         form.addRow(QLabel(i18n.t("result_format")), self.fmt)
@@ -123,6 +150,38 @@ class SettingsPanel(CalcPanel):
         main.addLayout(row)
         main.addStretch(1)
 
+    # ==================================================================
+    # 主题
+    # ==================================================================
+
+    def _refresh_theme_combo(self):
+        """从 settings.themes() 动态刷新主题下拉框。"""
+        cur = self.settings.get("theme", "dark")
+        self.theme.blockSignals(True)
+        self.theme.clear()
+        try:
+            for name, info in self.settings.themes().items():
+                self.theme.addItem(info.get("label", name), name)
+        except Exception as e:
+            log_exc(e, module="SettingsPanel._refresh_theme_combo")
+        self.theme.addItem(self.i18n.t("theme_system", "跟随系统"), "system")
+        idx = self.theme.findData(cur)
+        if idx >= 0:
+            self.theme.setCurrentIndex(idx)
+        self.theme.blockSignals(False)
+
+    def _open_theme_editor(self):
+        try:
+            from ui.theme_editor import ThemeEditor
+            base = self.theme.currentData()
+            if base == "system":
+                base = self.settings.get("theme", "dark")
+            dlg = ThemeEditor(self.settings, self.i18n, self, base_theme=base)
+            if dlg.exec():
+                self._refresh_theme_combo()
+        except Exception as e:
+            log_exc(e, module="SettingsPanel._open_theme_editor")
+
     def _pick_palette(self, key):
         try:
             current = self.settings.palette().get(key, "#ffffff")
@@ -131,6 +190,10 @@ class SettingsPanel(CalcPanel):
                 self.settings.set_palette_color(key, c.name())
         except Exception as e:
             log_exc(e, module="SettingsPanel._pick_palette")
+
+    # ==================================================================
+    # 应用 / 重置
+    # ==================================================================
 
     def apply(self):
         try:
@@ -160,8 +223,8 @@ class SettingsPanel(CalcPanel):
             })
 
             if not lang_changed:
-                QMessageBox.information(self, "OK",
-                                        self.i18n.t("hot_reload", "Applied"))
+                QMessageBox.information(
+                    self, "OK", self.i18n.t("hot_reload", "Applied"))
         except Exception as e:
             log_exc(e, module="SettingsPanel.apply")
             QMessageBox.warning(self, "Error", str(e))
@@ -169,8 +232,13 @@ class SettingsPanel(CalcPanel):
     def reset(self):
         try:
             self.settings.reset()
+            self._refresh_theme_combo()
         except Exception as e:
             log_exc(e, module="SettingsPanel.reset")
+
+    # ==================================================================
+    # 导入 / 导出
+    # ==================================================================
 
     def _export(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -191,11 +259,16 @@ class SettingsPanel(CalcPanel):
             return
         try:
             self.settings.import_from(path)
-            QMessageBox.information(self, "OK",
-                                    self.i18n.t("hot_reload", "Applied"))
+            self._refresh_theme_combo()
+            QMessageBox.information(
+                self, "OK", self.i18n.t("hot_reload", "Applied"))
         except Exception as e:
             log_exc(e, module="SettingsPanel._import")
             QMessageBox.warning(self, "Error", str(e))
+
+    # ==================================================================
+    # 模块可见性
+    # ==================================================================
 
     def _edit_visibility(self):
         try:
