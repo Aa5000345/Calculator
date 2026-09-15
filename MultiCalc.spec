@@ -1,74 +1,129 @@
 # -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec：MultiCalc 打包配置。
+
+- 若 assets/icon.ico 存在，用作 exe 图标；否则使用 PyInstaller 默认图标
+- 打包 config/ 目录（默认设置、i18n、主题、离线汇率）
+- 排除测试与开发依赖
+"""
 import os
 
-root_dir = os.path.abspath('.')
+from PyInstaller.utils.hooks import collect_submodules
 
-a = Analysis(
-    ['main.py'],                          # 主入口
-    pathex=[root_dir],                    # 项目根目录加入 Python 路径
+# ---------------------------------------------------------------------------
+# 路径
+# ---------------------------------------------------------------------------
+
+ROOT = os.path.abspath(os.path.dirname(SPEC))  # noqa: F821  SPEC 由 PyInstaller 注入
+
+ICON_PATH = os.path.join(ROOT, "assets", "icon.ico")
+ICON = ICON_PATH if os.path.exists(ICON_PATH) else None
+
+if ICON is None:
+    print("[MultiCalc.spec] assets/icon.ico not found, using default icon")
+
+# ---------------------------------------------------------------------------
+# 数据文件（config 目录整体打包）
+# ---------------------------------------------------------------------------
+
+datas = [
+    (os.path.join(ROOT, "config"), "config"),
+]
+
+# 可选：若 assets 目录存在，也一并打包（用于托盘图标等）
+assets_dir = os.path.join(ROOT, "assets")
+if os.path.isdir(assets_dir):
+    datas.append((assets_dir, "assets"))
+
+# ---------------------------------------------------------------------------
+# 隐式导入
+# ---------------------------------------------------------------------------
+
+hiddenimports = [
+    # Qt 后端
+    "PySide6.QtSvg",
+    "PySide6.QtNetwork",
+    # matplotlib 后端
+    "matplotlib.backends.backend_qtagg",
+    "matplotlib.backends.backend_agg",
+    # core 子模块
+    "core.ai",
+    "core.secrets",
+    # 面板
+    "ui.panels.ai",
+    "ui.panels.script",
+    # 键盘
+    "ui.widgets.calc_keyboard",
+    "ui.widgets.focus_tracker",
+    "ui.widgets.key_button",
+    "ui.widgets.keyboard_layouts",
+]
+
+# 自动收集可能被延迟导入的包
+hiddenimports += collect_submodules("sympy")
+hiddenimports += collect_submodules("pint")
+
+# ---------------------------------------------------------------------------
+# 排除项（减小体积）
+# ---------------------------------------------------------------------------
+
+excludes = [
+    "tkinter",
+    "test",
+    "tests",
+    "unittest",
+    "pytest",
+    "IPython",
+    "jupyter",
+    "notebook",
+    "PyQt5",
+    "PyQt6",
+    "PySide2",
+    "wx",
+]
+
+# ---------------------------------------------------------------------------
+# 构建
+# ---------------------------------------------------------------------------
+
+block_cipher = None
+
+a = Analysis(  # noqa: F821
+    [os.path.join(ROOT, "main.py")],
+    pathex=[ROOT],
     binaries=[],
-    datas=[
-        ('config', 'config'),             # 完整包含 config/ 目录（i18n + 默认设置 + 离线汇率）
-    ],
-    hiddenimports=[
-        # PySide6 核心模块
-        'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets',
-        'PySide6.QtNetwork', 'shiboken6',
-        # 项目自定义模块（PyInstaller 有时无法自动识别）
-        'core', 'core.engine', 'core.settings', 'core.i18n',
-        'core.history', 'core.rates', 'core.crypto_tools',
-        'core.probability', 'core.finance', 'core.dates',
-        'core.bits', 'core.bits_ext', 'core.random_ext',
-        'core.constants', 'core.units', 'core.worker',
-        'core.logger', 'core.errors', 'core.error_handler',
-        'core.updater', 'core.plugins', 'core.latex_ext',
-        'ui', 'ui.panels', 'ui.latex_widget',
-        'ui.shortcuts', 'ui.split_view', 'ui.tray',
-        'ui.command_palette', 'ui.settings_dialog',
-        # matplotlib 后端（如果使用了 QtAgg）
-        'matplotlib.backends.backend_qtagg',
-        # scipy / sympy 的隐式导入
-        'scipy.special', 'scipy.stats',
-        'sympy.parsing.sympy_parser',
-    ],
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        # 排除未使用的重型/无关模块，控制体积
-        'tkinter', 'PyQt5', 'PyQt6', 'PySide2',
-        'pandas', 'IPython', 'jupyter', 'notebook',
-        'tests', 'examples', 'docs',
-        'setuptools', 'pip', 'wheel',
-    ],
+    excludes=excludes,
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
     noarchive=False,
-    optimize=0,
 )
 
-pyz = PYZ(a.pure)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)  # noqa: F821
 
-exe = EXE(
+exe = EXE(  # noqa: F821
     pyz,
     a.scripts,
     a.binaries,
+    a.zipfiles,
     a.datas,
     [],
-    name='MultiCalc',
+    name="MultiCalc",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,                  # 如已安装 UPX 则启用压缩
-    upx_exclude=[
-        'vcruntime140.dll',    # 排除 C 运行时 DLL，避免 UPX 压缩后兼容性问题
-        'msvcp140.dll',
-        'python3*.dll',
-    ],
+    upx=True,
+    upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,             # 无控制台窗口
+    console=False,      # 无控制台窗口
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico',    # 如有图标，取消注释并指向正确路径
+    icon=ICON,          # 关键：None 时用默认图标
 )
