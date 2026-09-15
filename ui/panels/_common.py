@@ -1,11 +1,14 @@
-"""面板共享工具：错误展示、异步执行、布局清理、统一 ResultView。"""
+"""面板共享工具：错误展示、异步执行、布局清理、统一 ResultView、
+InlinePreviewBar（实时预览）。"""
 from __future__ import annotations
 
 import csv as _csv
 import io as _io
 import json as _json
 
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import (
+    Qt, Signal, QPropertyAnimation, QEasingCurve, QTimer,
+)
 from PySide6.QtWidgets import (
     QWidget, QPlainTextEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QTabWidget, QScrollArea, QMessageBox, QApplication, QLabel, QMenu,
@@ -92,6 +95,88 @@ def run_async(parent_widget, fn, *args,
 
 
 # =====================================================================
+# 实时预览条
+# =====================================================================
+
+_SKIP_KEYWORDS = (
+    "integrate", "solve", "limit", "summation", "product",
+    "dsolve", "quad", "minimize", "linprog",
+)
+
+
+class InlinePreviewBar(QLabel):
+    """输入时显示实时预览的灰色小字。
+
+    - 300ms 防抖
+    - 表达式 > 40 字符或含昂贵关键字时跳过
+    - 求值异常静默失败（清空预览）
+    """
+
+    def __init__(self, calc_fn=None, parent=None):
+        super().__init__(parent)
+        self._calc_fn = calc_fn
+        self._enabled_getter = None
+        self._pending = ""
+
+        self.setStyleSheet("color: #888; padding-left: 2px; font-size: 10pt;")
+        self.setMinimumHeight(18)
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(300)
+        self._timer.timeout.connect(self._do_preview)
+
+    def attach(self, line_edit, enabled_getter=None):
+        self._enabled_getter = enabled_getter
+        line_edit.textChanged.connect(self._on_text)
+
+    def _on_text(self, text):
+        self._pending = text or ""
+        if not self._should_preview(self._pending):
+            self.setText("")
+            return
+        self._timer.start()
+
+    @staticmethod
+    def _should_preview(text: str) -> bool:
+        s = (text or "").strip()
+        if not s or len(s) > 40:
+            return False
+        low = s.lower()
+        for kw in _SKIP_KEYWORDS:
+            if kw in low:
+                return False
+        return True
+
+    def _do_preview(self):
+        try:
+            if self._enabled_getter is not None:
+                if not self._enabled_getter():
+                    self.setText("")
+                    return
+        except Exception:
+            pass
+        if self._calc_fn is None:
+            return
+        try:
+            result = self._calc_fn(self._pending)
+            if result is None:
+                self.setText("")
+                return
+            if isinstance(result, tuple) and len(result) == 2:
+                value, _ = result
+            else:
+                value = result
+            text = str(value)
+            if len(text) > 80:
+                text = text[:77] + "…"
+            self.setText(f"= {text}")
+        except Exception:
+            self.setText("")
+
+
+# =====================================================================
 # 可折叠步骤组
 # =====================================================================
 
@@ -145,11 +230,11 @@ class ResultView(QWidget):
     """统一结果查看器。
 
     - 多格式复制（文本 / LaTeX / JSON / CSV）
+    - 跨面板发送子菜单
     - 结果高亮动画
-    - 步骤折叠（``steps`` 参数）
+    - 步骤折叠
     - 错误卡片（复制详情 / 查看日志 / 重试）
-    - 耗时显示（``elapsed`` 参数）
-    - 右键菜单「发送到单位面板」
+    - 耗时显示
     """
 
     elapsed_changed = Signal(float)
@@ -306,17 +391,24 @@ class ResultView(QWidget):
             pass
 
     # ------------------------------------------------------------------
-    # 复制菜单
+    # 复制 / 发送菜单
     # ------------------------------------------------------------------
 
     def _show_context_menu(self, pos):
+        i18n = self.i18n
         menu = QMenu(self)
-        a_text = menu.addAction(self.i18n.t("copy_as_text", "复制为文本"))
-        a_latex = menu.addAction(self.i18n.t("copy_as_latex", "复制为 LaTeX"))
-        a_json = menu.addAction(self.i18n.t("copy_as_json", "复制为 JSON"))
-        a_csv = menu.addAction(self.i18n.t("copy_as_csv", "复制为 CSV"))
+        a_text = menu.addAction(i18n.t("copy_as_text", "复制为文本"))
+        a_latex = menu.addAction(i18n.t("copy_as_latex", "复制为 LaTeX"))
+        a_json = menu.addAction(i18n.t("copy_as_json", "复制为 JSON"))
+        a_csv = menu.addAction(i18n.t("copy_as_csv", "复制为 CSV"))
         menu.addSeparator()
-        a_unit = menu.addAction(self.i18n.t("send_to_unit", "发送到单位面板"))
+
+        send_menu = menu.addMenu(i18n.t("send_to", "发送到…"))
+        a_send_unit = send_menu.addAction(i18n.t("send_to_unit", "单位面板"))
+        a_send_sci = send_menu.addAction(i18n.t("send_to_sci", "科学计算"))
+        a_send_table = send_menu.addAction(i18n.t("send_to_table", "数据表（新行）"))
+        a_send_snippet = send_menu.addAction(i18n.t("send_to_snippet", "保存为片段"))
+        a_send_plot = send_menu.addAction(i18n.t("send_to_plot", "绘图面板"))
 
         chosen = menu.exec(self.text.mapToGlobal(pos))
         if chosen is None:
@@ -341,9 +433,23 @@ class ResultView(QWidget):
                 w.writerow(["text", "latex"])
                 w.writerow([self._last_text, self._last_latex])
                 QApplication.clipboard().setText(buf.getvalue())
-            elif chosen is a_unit:
+            elif chosen is a_send_unit:
                 from ui.signals import bus
                 bus().send_to_unit.emit(self._last_text)
+            elif chosen is a_send_sci:
+                from ui.signals import bus
+                bus().send_to_sci.emit(self._last_text)
+            elif chosen is a_send_table:
+                from ui.signals import bus
+                bus().send_to_table.emit(self._last_text)
+            elif chosen is a_send_snippet:
+                from ui.signals import bus
+                preview = (self._last_text or "").strip().splitlines()
+                name = (preview[0][:30] if preview else "snippet")
+                bus().send_to_snippet.emit(name, self._last_text)
+            elif chosen is a_send_plot:
+                from ui.signals import bus
+                bus().send_to_plot.emit(self._last_text)
         except Exception as e:
             log_exc(e, module="ResultView._show_context_menu")
 

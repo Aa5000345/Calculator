@@ -1,4 +1,4 @@
-"""系统托盘：显示/隐藏窗口 + 快速打开 + 退出。"""
+"""系统托盘：显示/隐藏窗口 + 快速打开 + 计算器键盘 + 退出。"""
 from __future__ import annotations
 
 from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor
@@ -8,7 +8,25 @@ from core.logger import log_exc
 
 
 def _make_icon():
-    """生成一个简单的默认图标，避免依赖外部资源。"""
+    """加载 assets/icon.ico；若不存在，回退到手绘。"""
+    import os
+    from PySide6.QtGui import QIcon
+    # 打包后 base_path 与源码运行时的相对路径不同，尝试多个候选
+    candidates = [
+        os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                     "assets", "icon.ico"),
+        os.path.join(os.getcwd(), "assets", "icon.ico"),
+        # PyInstaller onefile 解包目录
+        os.path.join(getattr(__import__("sys"), "_MEIPASS", ""),
+                     "assets", "icon.ico"),
+    ]
+    for p in candidates:
+        if p and os.path.exists(p):
+            icon = QIcon(p)
+            if not icon.isNull():
+                return icon
+
+    # 回退：原来的手绘逻辑
     pm = QPixmap(64, 64)
     pm.fill(QColor("#007acc"))
     p = QPainter(pm)
@@ -41,6 +59,11 @@ class Tray:
             act_hide.triggered.connect(self.window.hide)
             act_settings = QAction(self.i18n.t("settings"), menu)
             act_settings.triggered.connect(self._open_settings)
+
+            act_kb = QAction(
+                self.i18n.t("calc_keyboard", "计算器键盘"), menu)
+            act_kb.triggered.connect(self._toggle_keyboard)
+
             act_quit = QAction(self.i18n.t("quit", "Quit"), menu)
             act_quit.triggered.connect(self._quit)
 
@@ -48,6 +71,7 @@ class Tray:
             menu.addAction(act_hide)
             menu.addSeparator()
             menu.addAction(act_settings)
+            menu.addAction(act_kb)
             menu.addSeparator()
             menu.addAction(act_quit)
 
@@ -82,6 +106,13 @@ class Tray:
         try:
             self.window.showNormal()
             self.window._switch_by_key_pub("settings")
+        except Exception:
+            pass
+
+    def _toggle_keyboard(self):
+        try:
+            self.window.showNormal()
+            self.window.toggle_keyboard()
         except Exception:
             pass
 

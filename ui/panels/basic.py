@@ -1,4 +1,4 @@
-"""基础计算面板：键盘驱动 + 百分比模板 + 内存槽 + 耗时显示。"""
+"""基础计算面板：键盘驱动 + 百分比模板 + 内存槽 + 耗时显示 + 实时预览。"""
 from __future__ import annotations
 
 import time
@@ -14,7 +14,7 @@ from core import engine
 from core.errors import InputError
 from core.logger import log_exc
 from ui.shortcuts import install_panel_shortcuts
-from ._common import _clear_layout, friendly_error, ResultView
+from ._common import _clear_layout, friendly_error, ResultView, InlinePreviewBar
 from .base import CalcPanel
 
 
@@ -91,17 +91,26 @@ class BasicPanel(CalcPanel):
         top = QHBoxLayout()
         top.addWidget(QLabel(i18n.t("expr")))
         top.addStretch(1)
+        top.addWidget(self.make_kb_button())
         top.addWidget(self.fmt_mode)
 
         self.hint = QLabel("")
         self.hint.setStyleSheet("color: #888; padding-left: 2px;")
         self._update_hint()
 
+        # 实时预览条
+        self.preview = InlinePreviewBar(calc_fn=self._preview_calc)
+        self.preview.attach(
+            self.expr,
+            enabled_getter=lambda: bool(
+                self.settings.get("inline_preview", True)))
+
         self.result = ResultView(i18n)
 
         main = QVBoxLayout(self)
         main.addLayout(top)
         main.addWidget(self.expr)
+        main.addWidget(self.preview)
         main.addWidget(self.hint)
         main.addWidget(self.btn_box)
         main.addWidget(QLabel(i18n.t(
@@ -127,6 +136,21 @@ class BasicPanel(CalcPanel):
         self._esc_sc = sc
 
         self.expr.textChanged.connect(self._update_hint)
+
+    # ---------------- 角度 / 预览 ----------------
+
+    def _angle_mode(self) -> str:
+        try:
+            return self.settings.get("angle_mode", "RAD") or "RAD"
+        except Exception:
+            return "RAD"
+
+    def _preview_calc(self, expr):
+        try:
+            value, _desc = engine.basic_calc_smart(expr, self._angle_mode())
+            return value
+        except Exception:
+            return None
 
     # ---------------- 内存槽 ----------------
 
@@ -267,8 +291,9 @@ class BasicPanel(CalcPanel):
             return
         self.result.show_result(self.i18n.t("running", "Running…"), "")
         self._calc_start = time.time()
+        angle = self._angle_mode()
         self.run(
-            engine.basic_calc_smart, expr,
+            engine.basic_calc_smart, expr, angle,
             cancel_btn=self.cancel_btn,
             main_btn=self.calc_btn,
             on_done=self._on_done,

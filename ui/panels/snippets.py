@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
+    QApplication, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QListWidget, QListWidgetItem, QInputDialog, QMessageBox,
     QAbstractItemView,
 )
@@ -47,6 +47,7 @@ class SnippetsPanel(CalcPanel):
         main.addWidget(self.list, 1)
         main.addLayout(row)
 
+        self._items = []
         self._reload()
 
     def _reload(self):
@@ -94,7 +95,10 @@ class SnippetsPanel(CalcPanel):
             text=cur.get("expr", ""))
         if not ok:
             return
-        idx = self._items.index(cur)
+        try:
+            idx = self._items.index(cur)
+        except ValueError:
+            return
         snip_mod.update(idx, name, expr, cur.get("tags"))
         self._reload()
 
@@ -102,7 +106,10 @@ class SnippetsPanel(CalcPanel):
         cur = self._selected()
         if cur is None:
             return
-        idx = self._items.index(cur)
+        try:
+            idx = self._items.index(cur)
+        except ValueError:
+            return
         snip_mod.remove(idx)
         self._reload()
 
@@ -112,10 +119,6 @@ class SnippetsPanel(CalcPanel):
             return
         expr = cur.get("expr", "")
         try:
-            from ui.signals import bus
-            # 复用 send_to_unit 机制：发送到 basic 面板
-            # 这里改为剪贴板 + 提示
-            from PySide6.QtWidgets import QApplication
             QApplication.clipboard().setText(expr)
             QMessageBox.information(
                 self, "OK",

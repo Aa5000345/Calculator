@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""主窗口：侧边栏分组 + 搜索 + 面板切换 + 热重载 + 状态持久化。"""
+"""主窗口：侧边栏分组 + 搜索 + 面板切换 + 热重载 + 状态持久化 + 键盘/AI/脚本集成。"""
 from __future__ import annotations
 
 import base64
@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
     QStackedWidget, QDockWidget, QAbstractItemView, QDialog, QMessageBox,
+    QTableWidgetItem,
 )
 
 from core.logger import log_exc, log_info
@@ -20,9 +21,11 @@ from ui.shortcuts import install_main_window_shortcuts
 from ui.command_palette import CommandPalette, _fuzzy_score
 from ui.tray import Tray
 from ui.split_view import SplitView
+from ui.signals import bus
 from core import engine
 from core import updater as update_mod
 from core import plugins as plugin_mod
+from core import snippets as snip_mod
 from ui.panels.registry import all_panels
 
 
@@ -33,7 +36,8 @@ DEFAULT_GROUPS = [
     ("数学", ["matrix", "plot", "plot3d"]),
     ("财务", ["finance", "date"]),
     ("工具", ["bits", "crypto_tools", "latex", "tools"]),
-    ("生产力", ["snippets", "timer", "clipboard_history"]),
+    ("生产力", ["snippets", "timer", "clipboard_history", "script"]),
+    ("AI", ["ai"]),
     ("系统", ["history", "settings"]),
 ]
 
@@ -46,7 +50,8 @@ _MODULE_KEY_MAP = {
     "plot3d": "plot3d", "random": "random", "bits": "bits",
     "latex": "latex", "settings": "settings",
     "data_table": "data_table", "tools": "tools",
-    "snippets": "snippets", "timer": "timer",
+    "snippets": "snippets", "timer": "timer", "script": "script",
+    "ai": "ai",
     "clipboard": "clipboard_history",
     "clipboard_history": "clipboard_history",
 }
@@ -63,6 +68,7 @@ _MODULE_PREFIX_MAP = (
     ("pw-strength", "crypto_tools"),
     ("table-", "data_table"),
     ("jwt", "tools"), ("qr", "tools"), ("regex", "tools"),
+    ("ai:", "ai"), ("script:", "script"),
 )
 
 
@@ -92,6 +98,7 @@ class MainWindow(QMainWindow):
         self._item_by_key = {}
         self._split = None
         self._force_quit = False
+        self._keyboard = None
 
         self._restore_geometry()
         self._build()
@@ -111,6 +118,17 @@ class MainWindow(QMainWindow):
             self._tray.install()
         self._build_menu()
         self._load_plugins()
+
+        if self.settings.get("keyboard_visible", False):
+            QTimer.singleShot(200, self._show_keyboard_initial)
+
+    def _show_keyboard_initial(self):
+        try:
+            kb = self._ensure_keyboard()
+            kb.show()
+            kb.raise_()
+        except Exception:
+            pass
 
     # ---------------- 几何 ----------------
 
@@ -184,7 +202,6 @@ class MainWindow(QMainWindow):
         self.dock.setWidget(side)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.dock)
 
-        # ---- 用注册表注册面板 ----
         ctx = _Ctx(
             base_path=self.base_path,
             settings=self.settings,
@@ -201,11 +218,9 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 log_exc(e, module=f"main_window.register:{spec.key}")
 
-        # ---- 构建树 ----
         self._rebuild_tree()
         self._apply_filter("")
 
-        # ---- 恢复上次模块 ----
         last = self.settings.get("last_module", "basic")
         if last in self._panels:
             self.switch_to_key(last)
@@ -213,7 +228,21 @@ class MainWindow(QMainWindow):
             self.switch_to_key(self._keys[0])
 
         self._restore_layout()
+        self._wire_signals()
         self.apply_theme()
+
+    def _wire_signals(self):
+        """连接跨面板信号总线。"""
+        try:
+            b = bus()
+            b.send_to_basic.connect(self._on_send_to_basic)
+            b.send_to_sci.connect(self._on_send_to_sci)
+            b.send_to_table.connect(self._on_send_to_table)
+            b.send_to_snippet.connect(self._on_send_to_snippet)
+            b.send_to_plot.connect(self._on_send_to_plot)
+            b.send_to_unit.connect(self._on_send_to_unit_view)
+        except Exception as e:
+            log_exc(e, module="MainWindow._wire_signals")
 
     def _register(self, key, title, widget, group="工具"):
         self._panels[key] = widget
@@ -339,6 +368,14 @@ class MainWindow(QMainWindow):
             self.settings.set("last_module", key, notify=False)
         except Exception:
             pass
+
+        # 通知浮动键盘切换布局（如果已经创建）
+        if self._keyboard is not None:
+            try:
+                self._keyboard.set_module(key)
+            except Exception:
+                pass
+
         item = self._item_by_key.get(key)
         if (item is not None and not item.isHidden()
                 and self.tree.currentItem() is not item):
@@ -396,6 +433,118 @@ class MainWindow(QMainWindow):
         self.tree.setVisible(not self.tree.isVisible())
         self.search_box.setVisible(self.tree.isVisible())
         self.vis_btn.setVisible(self.tree.isVisible())
+
+    # ---------------- 浮动键盘 ----------------
+
+    def _ensure_keyboard(self):
+        if self._keyboard is None:
+            try:
+                from ui.widgets.calc_keyboard import CalcKeyboard
+                self._keyboard = CalcKeyboard(
+                    self.settings, self.i18n, self)
+                self._keyboard.equals_requested.connect(
+                    self._on_keyboard_equals)
+            except Exception as e:
+                log_exc(e, module="MainWindow._ensure_keyboard")
+        return self._keyboard
+
+    def toggle_keyboard(self):
+        kb = self._ensure_keyboard()
+        if kb is None:
+            return
+        # 同步当前模块布局
+        try:
+            cur = self.stack.currentWidget()
+            for k, w in self._panels.items():
+                if w is cur:
+                    kb.set_module(k)
+                    break
+        except Exception:
+            pass
+        try:
+            if kb.isVisible():
+                kb.hide()
+            else:
+                kb.show()
+                kb.raise_()
+        except Exception as e:
+            log_exc(e, module="MainWindow.toggle_keyboard")
+
+    def _on_keyboard_equals(self):
+        """键盘按下 "=" 时，触发当前面板的 calc()。"""
+        try:
+            current = self.stack.currentWidget()
+            fn = getattr(current, "calc", None)
+            if callable(fn):
+                fn()
+        except Exception as e:
+            log_exc(e, module="MainWindow._on_keyboard_equals")
+
+    # ---------------- 跨面板发送 ----------------
+
+    def _on_send_to_unit_view(self, _text):
+        try:
+            self._switch_by_key_pub("unit")
+        except Exception:
+            pass
+
+    def _on_send_to_basic(self, text):
+        try:
+            self._switch_by_key_pub("basic")
+            panel = self._panels.get("basic")
+            if panel is not None:
+                w = getattr(panel, "expr", None)
+                if w is not None and hasattr(w, "setText"):
+                    w.setText(str(text))
+                    if hasattr(w, "setFocus"):
+                        w.setFocus()
+        except Exception as e:
+            log_exc(e, module="MainWindow._on_send_to_basic")
+
+    def _on_send_to_sci(self, text):
+        try:
+            self._switch_by_key_pub("scientific")
+            panel = self._panels.get("scientific")
+            if panel is not None:
+                w = getattr(panel, "expr", None)
+                if w is not None and hasattr(w, "setText"):
+                    w.setText(str(text))
+        except Exception as e:
+            log_exc(e, module="MainWindow._on_send_to_sci")
+
+    def _on_send_to_table(self, text):
+        try:
+            self._switch_by_key_pub("data_table")
+            panel = self._panels.get("data_table")
+            if panel is None:
+                return
+            if hasattr(panel, "_append_row"):
+                panel._append_row()
+                row = panel.table.rowCount() - 1
+                panel.table.setItem(row, 0, QTableWidgetItem(str(text)))
+        except Exception as e:
+            log_exc(e, module="MainWindow._on_send_to_table")
+
+    def _on_send_to_snippet(self, name, expr):
+        try:
+            snip_mod.add(name or "snippet", expr)
+            self._switch_by_key_pub("snippets")
+            panel = self._panels.get("snippets")
+            if panel is not None and hasattr(panel, "_reload"):
+                panel._reload()
+        except Exception as e:
+            log_exc(e, module="MainWindow._on_send_to_snippet")
+
+    def _on_send_to_plot(self, text):
+        try:
+            self._switch_by_key_pub("plot")
+            panel = self._panels.get("plot")
+            if panel is not None and hasattr(panel, "add_curve"):
+                panel.add_curve(str(text), "cartesian", "-10", "10")
+                if hasattr(panel, "plot"):
+                    panel.plot()
+        except Exception as e:
+            log_exc(e, module="MainWindow._on_send_to_plot")
 
     # ---------------- 可见性 ----------------
 
@@ -527,6 +676,11 @@ class MainWindow(QMainWindow):
             if key in (None, "theme", "font_family", "font_size",
                        "palette", "result_format"):
                 self.apply_theme()
+                if self._keyboard is not None:
+                    try:
+                        self._keyboard.refresh_theme()
+                    except Exception:
+                        pass
             for p in self._panels.values():
                 fn = getattr(p, "on_settings_changed", None)
                 if callable(fn):
@@ -778,6 +932,11 @@ class MainWindow(QMainWindow):
         a_palette.triggered.connect(self.open_command_palette)
         m_view.addAction(a_palette)
 
+        a_kb = QAction(self.i18n.t("calc_keyboard", "计算器键盘"), self)
+        a_kb.setShortcut("Ctrl+Shift+K")
+        a_kb.triggered.connect(self.toggle_keyboard)
+        m_view.addAction(a_kb)
+
         a_split = QAction(self.i18n.t("open_in_split", "Open in split"), self)
         a_split.setShortcut("Ctrl+\\")
         a_split.triggered.connect(self.open_current_in_split)
@@ -827,7 +986,9 @@ class MainWindow(QMainWindow):
         cmds.append((self.i18n.t("close_split", "Close split"),
                      self.close_split))
 
-        # 主题
+        cmds.append((self.i18n.t("calc_keyboard_show", "显示计算器键盘"),
+                     self.toggle_keyboard))
+
         for name, info in self.settings.themes().items():
             cmds.append((f"theme: {info.get('label', name)}",
                          lambda x=name: self.settings.set("theme", x)))
@@ -882,7 +1043,11 @@ class MainWindow(QMainWindow):
             return []
 
     def _palette_calc(self, expr):
-        return engine.basic_calc_smart(expr)
+        try:
+            angle = self.settings.get("angle_mode", "RAD") or "RAD"
+            return engine.basic_calc_smart(expr, angle)
+        except Exception:
+            return engine.basic_calc_smart(expr)
 
     def open_command_palette(self):
         try:

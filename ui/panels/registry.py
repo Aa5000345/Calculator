@@ -39,9 +39,8 @@ def all_panels() -> list[PanelSpec]:
     from .snippets import SnippetsPanel
     from .timer_panel import TimerPanel
     from .clipboard_history import ClipboardHistoryPanel
-
-    def _mk(factory, *args, **kwargs):
-        return lambda ctx: factory(*args, **kwargs)
+    from .ai import AIPanel
+    from .script import ScriptPanel
 
     return [
         # ---------------- 基础 ----------------
@@ -96,6 +95,11 @@ def all_panels() -> list[PanelSpec]:
                   "Clipboard",
                   lambda c: ClipboardHistoryPanel(c.settings, c.i18n,
                                                   c.history)),
+        PanelSpec("script", "生产力", "script", "Script",
+                  lambda c: ScriptPanel(c.settings, c.i18n, c.history)),
+        # ---------------- AI ----------------
+        PanelSpec("ai", "AI", "ai", "AI Assistant",
+                  lambda c: AIPanel(c.settings, c.i18n, c.history)),
         # ---------------- 系统 ----------------
         PanelSpec("history", "系统", "history", "History",
                   lambda c: _make_history(c)),

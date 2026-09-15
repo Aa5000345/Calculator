@@ -1,15 +1,19 @@
 """全局快捷键安装。
 
-主窗口级：
-    Ctrl+1..9    切换第 N 个可见模块
-    Ctrl+,       打开设置面板
-    Ctrl+Shift+L 切换侧边栏
+主窗口级（Ctrl+K / Ctrl+Shift+K 由 MainWindow 菜单项持有 QAction.setShortcut，
+不在此重复注册，避免 Ambiguous shortcut overload）：
+    Ctrl+1..9      切换第 N 个可见模块
+    Ctrl+,         打开设置面板
+    Ctrl+Shift+L   切换侧边栏
+    Ctrl+K         命令面板       —— 见 MainWindow._build_menu
+    Ctrl+Shift+K   显示/隐藏浮动键盘 —— 见 MainWindow._build_menu
+    Ctrl+\\        当前面板在分屏打开 —— 见 MainWindow._build_menu
 
 面板级：
-    Ctrl+Enter   计算
-    Esc          取消运行中的任务
-    Ctrl+L       清空输入
-    Up / Down    历史表达式召回
+    Ctrl+Enter     计算
+    Esc            取消运行中的任务
+    Ctrl+L         清空输入
+    Up / Down      历史表达式召回
 """
 from __future__ import annotations
 
@@ -35,6 +39,11 @@ def install_main_window_shortcuts(window):
     sc.setContext(Qt.ApplicationShortcut)
     sc.activated.connect(window.toggle_sidebar)
 
+    # ⚠ 以下两个快捷键由 MainWindow._build_menu 的 QAction 持有，
+    #   此处不再注册，避免 Ambiguous shortcut overload：
+    #     Ctrl+K        → open_command_palette
+    #     Ctrl+Shift+K  → toggle_keyboard
+
 
 def _switch_visible_index(window, idx):
     try:
@@ -56,17 +65,7 @@ def install_panel_shortcuts(panel, *,
                             on_calc=None, on_cancel=None,
                             on_clear=None, expr_widget=None,
                             history_getter=None):
-    """给面板安装通用快捷键。
-
-    参数
-    ----
-    panel        : QWidget
-    on_calc      : callable | None
-    on_cancel    : callable | None
-    on_clear     : callable | None
-    expr_widget  : QLineEdit | QPlainTextEdit | None 用于 Up/Down 历史召回
-    history_getter : callable() -> list[str]  历史表达式列表
-    """
+    """给面板安装通用快捷键。"""
     shortcuts = []
 
     if on_calc is not None and expr_widget is not None:

@@ -1,4 +1,4 @@
-"""科学计算 / 微积分面板：变量 / ODE / 数值积分 / 优化。"""
+"""科学计算 / 微积分面板：变量 / ODE / 数值积分 / 优化 + 实时预览。"""
 from __future__ import annotations
 
 import re
@@ -19,7 +19,7 @@ from core import constants as const_mod
 from core import symbols as sym_mod
 from core.logger import log_exc
 from ui.shortcuts import install_panel_shortcuts
-from ._common import ResultView, friendly_error
+from ._common import ResultView, friendly_error, InlinePreviewBar
 from .base import CalcPanel
 
 
@@ -97,7 +97,6 @@ class ScientificPanel(CalcPanel):
                   "atan", "log", "exp"):
             self.series_kind.addItem(i18n.t(f"series_{k}", k), k)
 
-        # --- ODE / 优化 新增控件 ---
         self.func_name = QLineEdit("y")
         self.ics = QLineEdit("")
         self.ics.setPlaceholderText("y(0)=1, y(1)=2")
@@ -123,6 +122,7 @@ class ScientificPanel(CalcPanel):
         head.addWidget(self.expr, 1)
         head.addWidget(self.const_btn)
         self.form.addRow(self.expr_label, head)
+        head.addWidget(self.make_kb_button())
         self.form.addRow(QLabel(i18n.t("operation")), self.op)
 
         self._rows = {}
@@ -163,9 +163,15 @@ class ScientificPanel(CalcPanel):
         row.addWidget(self.calc_btn, 1)
         row.addWidget(self.cancel_btn)
 
+        # 实时预览
+        self.preview = InlinePreviewBar(calc_fn=self._preview_calc)
+        self.preview.attach(
+            self.expr,
+            enabled_getter=lambda: bool(
+                self.settings.get("inline_preview", True)))
+
         self.result = ResultView(i18n)
 
-        # --- 变量标签页 ---
         self.tabs = QTabWidget()
         self.tabs.addTab(self.result, i18n.t("result", "结果"))
         self.tabs.addTab(self._build_var_tab(),
@@ -174,6 +180,7 @@ class ScientificPanel(CalcPanel):
 
         main = QVBoxLayout(self)
         main.addLayout(self.form)
+        main.addWidget(self.preview)
         main.addLayout(row)
         main.addWidget(self.tabs, 1)
 
@@ -187,6 +194,20 @@ class ScientificPanel(CalcPanel):
             expr_widget=self.expr,
             history_getter=self._history_exprs,
         )
+
+    # ---------------- 角度 / 预览 ----------------
+
+    def _angle_mode(self) -> str:
+        try:
+            return self.settings.get("angle_mode", "RAD") or "RAD"
+        except Exception:
+            return "RAD"
+
+    def _preview_calc(self, expr):
+        try:
+            return engine.sci_eval(expr, self._angle_mode())
+        except Exception:
+            return None
 
     # ---------------- 变量标签页 ----------------
 
@@ -346,8 +367,9 @@ class ScientificPanel(CalcPanel):
         return out if out else None
 
     def _compute(self, op, expr, var):
+        angle = self._angle_mode()
         if op == "calc":
-            return engine.sci_eval(expr)
+            return engine.sci_eval(expr, angle)
         if op == "complex":
             return engine.sci_complex_eval(expr)
         if op == "simplify":
@@ -433,7 +455,6 @@ class ScientificPanel(CalcPanel):
         op = self.op.currentData()
         expr = self.expr.text()
 
-        # 若表达式是赋值，刷新变量列表
         if sym_mod.match_assignment(expr.strip()):
             self._refresh_vars()
 

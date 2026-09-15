@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QSplitter, QStackedWidget, QWidget
+from PySide6.QtWidgets import QSplitter, QStackedWidget, QVBoxLayout, QWidget
 
 from core.logger import log_exc
 
@@ -22,8 +22,6 @@ class SplitView(QWidget):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
 
-        lay = QSplitter(Qt.Horizontal)  # 占位避免 import 警告
-        from PySide6.QtWidgets import QVBoxLayout
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.addWidget(self.splitter)

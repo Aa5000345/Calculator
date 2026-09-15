@@ -12,19 +12,42 @@ from core.logger import log_exc
 
 
 def _fuzzy_score(query: str, target: str) -> int:
-    """简单子序列匹配打分；越高越匹配。"""
+    """混合打分：精确 > 子串 > 子序列；对中文与 ASCII 都适用。
+
+    分数越高越匹配；0 表示不匹配。
+    """
+    if not query:
+        return 1
     q = query.lower()
     t = target.lower()
-    if not q:
-        return 1
-    if q in t:
-        return 1000 - t.index(q)
+
+    if q == t:
+        return 10000
+
+    # 完全子串：位置越靠前、目标越短越好
+    idx = t.find(q)
+    if idx >= 0:
+        return 5000 - idx * 10 - min(len(t), 200)
+
+    # 字符级子序列匹配
     i = 0
-    for ch in t:
+    first = -1
+    last = -1
+    for j, ch in enumerate(t):
         if i < len(q) and ch == q[i]:
+            if first < 0:
+                first = j
+            last = j
             i += 1
     if i == len(q):
-        return 500 - len(t)
+        # 匹配越紧凑、越靠前越好
+        spread = max(0, last - first)
+        return max(1, 2000 - spread * 5 - min(len(t), 200))
+
+    # 部分匹配：至少匹配一半 query 的字符
+    ratio = i / max(1, len(q))
+    if ratio >= 0.5:
+        return max(1, int(500 * ratio))
     return 0
 
 

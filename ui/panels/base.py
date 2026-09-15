@@ -1,17 +1,19 @@
-"""CalcPanel 基类：统一 Worker 管理、取消、设置回调、主题回调。"""
+"""CalcPanel 基类：Worker 管理 / 取消 / 设置回调 / 主题回调 / 键盘按钮。"""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QPushButton, QWidget
 
 
 class CalcPanel(QWidget):
     """所有功能面板的基类。
 
     提供：
-    - settings / i18n / history 存储
+    - settings / i18n / history 存储（均可为 None）
     - _worker 槽位与 cancel_current()
-    - run() 封装 run_async，自动把 worker 存到 self._worker
+    - run() 封装 run_async
     - on_settings_changed() / set_theme_colors() 默认空实现
+    - make_kb_button()：一键生成"⌨"按钮，呼出浮动键盘
     """
 
     module_key = "generic"
@@ -30,7 +32,6 @@ class CalcPanel(QWidget):
     def run(self, fn, *args,
             on_done=None, on_fail=None, on_cancel=None,
             cancel_btn=None, main_btn=None, **kwargs):
-        """在后台线程执行 fn；返回 Worker（同时保存在 self._worker）。"""
         from ._common import run_async
         self._worker = run_async(
             self, fn, *args,
@@ -41,7 +42,6 @@ class CalcPanel(QWidget):
         return self._worker
 
     def cancel_current(self):
-        """取消当前正在运行的 Worker（若有）。"""
         try:
             if self._worker is not None and self._worker.isRunning():
                 self._worker.cancel()
@@ -49,7 +49,6 @@ class CalcPanel(QWidget):
             pass
 
     def shutdown_workers(self, wait_ms: int = 2000):
-        """供 MainWindow.rebuild() 调用；同步等待 Worker 结束。"""
         try:
             if self._worker is not None and self._worker.isRunning():
                 self._worker.cancel()
@@ -72,7 +71,38 @@ class CalcPanel(QWidget):
     # ------------------------------------------------------------------
 
     def add_history(self, expr, result, module=None):
+        if self.history is None:
+            return
         try:
             self.history.add(module or self.module_key, str(expr), str(result))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # 键盘按钮
+    # ------------------------------------------------------------------
+
+    def make_kb_button(self) -> QPushButton:
+        """创建一个"⌨"按钮；点击呼出/隐藏浮动键盘。
+
+        面板可以把它加到自己的顶部工具栏中。
+        """
+        btn = QPushButton("⌨")
+        btn.setFixedSize(28, 24)
+        try:
+            btn.setToolTip(self.i18n.t("calc_keyboard", "计算器键盘"))
+        except Exception:
+            btn.setToolTip("计算器键盘")
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.clicked.connect(self._open_floating_keyboard)
+        return btn
+
+    def _open_floating_keyboard(self):
+        """通过父窗口上的 toggle_keyboard() 呼出浮动键盘。"""
+        try:
+            mw = self.window()
+            fn = getattr(mw, "toggle_keyboard", None)
+            if callable(fn):
+                fn()
         except Exception:
             pass

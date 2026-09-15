@@ -5,13 +5,13 @@ import json
 
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
-    QHBoxLayout, QGridLayout, QCheckBox,
+    QHBoxLayout, QGridLayout, QCheckBox, QTabWidget, QWidget,
+    QFormLayout,
 )
 
 from core import dates as dtmod
 from ._common import friendly_error
 from .base import CalcPanel
-from PySide6.QtWidgets import QTabWidget
 
 
 class DatePanel(CalcPanel):
@@ -205,7 +205,8 @@ class DatePanel(CalcPanel):
             self.result.setPlainText(friendly_error(self.i18n, e, "date"))
 
     def _build_sun_tab(self):
-        w = QWidget(); f = QFormLayout(w)
+        w = QWidget()
+        f = QFormLayout(w)
         self.sun_date = QLineEdit("2024-06-21")
         self.sun_lat = QLineEdit("39.9")
         self.sun_lon = QLineEdit("116.4")
