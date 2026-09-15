@@ -57,6 +57,8 @@
     "snippets": true,
     "timer": true,
     "clipboard_history": true,
+    "script": true,
+    "ai": true,
     "history": true,
     "settings": true
   },
@@ -68,7 +70,8 @@
     {"name": "数学", "keys": ["matrix", "plot", "plot3d"]},
     {"name": "财务", "keys": ["finance", "date"]},
     {"name": "工具", "keys": ["bits", "crypto_tools", "latex", "tools"]},
-    {"name": "生产力", "keys": ["snippets", "timer", "clipboard_history"]},
+    {"name": "生产力", "keys": ["snippets", "timer", "clipboard_history", "script"]},
+    {"name": "AI", "keys": ["ai"]},
     {"name": "系统", "keys": ["history", "settings"]}
   ],
   "manual_rates": {},
@@ -83,5 +86,16 @@
   ],
   "app_version": "1.0.0",
   "tray_enabled": false,
-  "minimize_to_tray": true
+  "minimize_to_tray": true,
+
+  "keyboard_layout": "sci",
+  "keyboard_geometry": null,
+  "keyboard_pinned": true,
+  "keyboard_visible": false,
+  "angle_mode": "RAD",
+  "inline_preview": true,
+
+  "ai_provider": "auto",
+  "ai_model": "",
+  "ai_base_url": ""
 }

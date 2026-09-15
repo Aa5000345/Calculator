@@ -1,8 +1,14 @@
-"""计算内核：科学计算 / 线性代数 / 绘图采样 / 单位 / 汇率 / 财务 / 日期 / 随机数"""
+"""计算内核：科学计算 / 线性代数 / 绘图采样 / 单位 / 汇率 / 财务 / 日期 / 随机数
+
+最终版变更：
+- 新增角度模式（DEG/RAD）支持；basic_calc / sci_eval / basic_calc_smart 接受 angle_mode
+- _parse / _handle_assignment 支持 base_locals 注入
+- sci_linprog 修复：import json as _json
+"""
 from __future__ import annotations
 
 import datetime
-import json
+import json as _json
 import math
 import random
 import re
@@ -52,6 +58,29 @@ _LOCALS = {
     "re": sp.re, "im": sp.im, "conjugate": sp.conjugate,
 }
 
+# ---------------------------------------------------------------------------
+# 角度模式：DEG / RAD
+# ---------------------------------------------------------------------------
+
+_DEG_TRIG = {
+    "sin": lambda x: sp.sin(x * sp.pi / 180),
+    "cos": lambda x: sp.cos(x * sp.pi / 180),
+    "tan": lambda x: sp.tan(x * sp.pi / 180),
+    "asin": lambda x: sp.asin(x) * 180 / sp.pi,
+    "acos": lambda x: sp.acos(x) * 180 / sp.pi,
+    "atan": lambda x: sp.atan(x) * 180 / sp.pi,
+}
+
+
+def _locals_for(angle_mode: str):
+    """按角度模式返回参数字典；RAD 时直接返回 _LOCALS（零开销）。"""
+    if str(angle_mode).upper() != "DEG":
+        return _LOCALS
+    out = dict(_LOCALS)
+    out.update(_DEG_TRIG)
+    return out
+
+
 _TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 
 
@@ -76,19 +105,21 @@ def _safety_check(s: str):
                              friendly_key="err_parse")
 
 
-def _parse(expr, extra=None):
+def _parse(expr, extra=None, base_locals=None):
     s = _norm(expr)
     if not s:
         raise InputError("表达式为空", friendly_key="err_empty_expr")
     _safety_check(s)
 
+    base = base_locals if base_locals is not None else _LOCALS
+
     # 1) 赋值语句：name = ...  或  name(args) = ...
     assignment = _symbols_mod.match_assignment(s)
     if assignment is not None:
-        return _handle_assignment(assignment)
+        return _handle_assignment(assignment, base)
 
     # 2) 普通表达式：把用户变量注入 local_dict
-    local = dict(_LOCALS)
+    local = dict(base)
     if extra:
         local.update(extra)
     for name, val in _symbols_mod.get_all().items():
@@ -105,13 +136,14 @@ def _parse(expr, extra=None):
         raise InputError(f"无法解析：{e}", friendly_key="err_parse") from e
 
 
-def _handle_assignment(assignment):
+def _handle_assignment(assignment, base_locals=None):
     """处理 ``x = expr`` / ``f(x, y) = expr``。"""
+    base = base_locals if base_locals is not None else _LOCALS
     name, args_str, rhs = assignment
 
     # --- 变量 ---
     if args_str is None:
-        val = _parse(rhs)
+        val = _parse(rhs, base_locals=base)
         _symbols_mod.set_symbol(name, val, raw=rhs)
         return val
 
@@ -125,7 +157,7 @@ def _handle_assignment(assignment):
     if len(syms) != len(args):
         raise InputError("函数参数名重复或非法", friendly_key="err_parse")
 
-    local = dict(_LOCALS)
+    local = dict(base)
     for n, s in zip(args, syms):
         local[n] = s
     for k, v in _symbols_mod.get_all().items():
@@ -142,7 +174,6 @@ def _handle_assignment(assignment):
     lam = sp.Lambda(syms[0] if len(syms) == 1 else syms, body)
     raw_repr = f"{name}{args_str} = {rhs}"
     _symbols_mod.set_symbol(name, lam, raw=str(body))
-    # 覆盖 raw 为人类可读形式
     _symbols_mod._RAW[name] = raw_repr
     _symbols_mod._save()
     return lam
@@ -183,7 +214,6 @@ def _format_scalar(obj, fmt: str, digits, sci, fraction, percent):
         except Exception:
             return None
 
-    # 分数优先于其他
     if fraction and not sci:
         try:
             fr = sp.Rational(sp.N(val)).limit_denominator(10 ** 9)
@@ -273,18 +303,10 @@ def _format_quantity(q, fmt="text", digits=None):
     except Exception:
         return str(q)
 
+
 def format_result(obj, fmt: str = "text", *,
                   digits=None, sci=False, fraction=False, percent=False):
-    """格式化结果。
-
-    参数
-    ----
-    fmt : "text" | "unicode" | "latex"
-    digits : int | None   有效小数位；None 表示按 sympy 原样
-    sci : bool            True 时使用科学计数法
-    fraction : bool       True 时优先以分数显示
-    percent : bool        True 时按百分比显示
-    """
+    """格式化结果。"""
     if obj is None:
         return ""
     if isinstance(obj, str):
@@ -293,7 +315,7 @@ def format_result(obj, fmt: str = "text", *,
         return str(obj)
     if _is_quantity(obj):
         return _format_quantity(obj, fmt, digits)
-    # 先尝试数值格式化
+
     special = _format_scalar(obj, fmt, digits, sci, fraction, percent)
     if special is not None:
         return special
@@ -354,13 +376,12 @@ def format_result(obj, fmt: str = "text", *,
 # 基础 / 科学计算
 # ---------------------------------------------------------------------------
 
-def basic_calc(expr):
-    # 单位感知优先
+def basic_calc(expr, angle_mode="RAD"):
     q = _try_unit_parse(expr)
     if q is not None:
         return q
 
-    e = _parse(expr)
+    e = _parse(expr, base_locals=_locals_for(angle_mode))
     try:
         val = sp.N(e, 30)
     except ZeroDivisionError as ex:
@@ -393,11 +414,11 @@ def scientific_calc(expr):
     return _parse(expr)
 
 
-def sci_eval(expr):
+def sci_eval(expr, angle_mode="RAD"):
     q = _try_unit_parse(expr)
     if q is not None:
         return q
-    return _num(_parse(expr))
+    return _num(_parse(expr, base_locals=_locals_for(angle_mode)))
 
 
 def sci_simplify(expr):
@@ -528,7 +549,6 @@ def _is_singular(A):
         if A.rows != A.cols:
             return True
         if A.free_symbols:
-            # 符号矩阵：用 det().equals(0) 判断
             try:
                 return bool(A.det().equals(0))
             except Exception:
@@ -550,7 +570,6 @@ def matrix_unary(action: str, text: str, scalar=None):
         try:
             return sp.simplify(A.inv())
         except Exception as e:  # noqa: BLE001
-            # sympy 会抛 NonInvertibleMatrixError
             raise MathError(f"矩阵不可逆：{e}",
                             friendly_key="err_math") from e
     if action == "transpose":
@@ -913,14 +932,13 @@ def random_numbers(low, high, count=1, mode="int"):
     if mode == "int":
         return [random.randint(int(lo), int(hi)) for _ in range(n)]
     return [round(random.uniform(lo, hi), 10) for _ in range(n)]
+
+
 # ===========================================================================
 # 第三轮新增：基础 / 科学 / 进制 / 矩阵
 # ===========================================================================
 
-# ---------- 基础：百分比 / 折扣 / 小费 / 税 ----------
-
 _PERCENT_PATTERNS = [
-    # (正则, 处理函数名) —— 顺序敏感，先匹配更具体的
     (re.compile(r"^\s*([\d.]+)\s*%\s*off\s+([\d.]+)\s*$", re.I), "off"),
     (re.compile(r"^\s*([\d.]+)\s*%\s*on\s+([\d.]+)\s*$", re.I), "on"),
     (re.compile(r"^\s*([\d.]+)\s*%\s*of\s+([\d.]+)\s*$", re.I), "of"),
@@ -954,14 +972,13 @@ def _percent_special(s: str):
             return b + b * a / 100, (
                 f"tax {a}% on {b} = {b * (1 + a / 100)} "
                 f"(tax {b * a / 100})")
-    # 单独 `X%` 视为 X/100
     m = re.match(r"^\s*([\d.]+)\s*%\s*$", s)
     if m:
         return float(m.group(1)) / 100, f"{m.group(1)}% = {float(m.group(1))/100}"
     return None
 
 
-def basic_calc_smart(expr: str):
+def basic_calc_smart(expr: str, angle_mode: str = "RAD"):
     """基础计算入口：先尝试百分比语法，失败则退回 basic_calc。
 
     返回 (值, 描述)；描述可能为 None。
@@ -974,13 +991,10 @@ def basic_calc_smart(expr: str):
     if special is not None:
         val, desc = special
         return _num(sp.N(sp.Float(val), 20)), desc
-    return basic_calc(expr), None
+    return basic_calc(expr, angle_mode=angle_mode), None
 
-
-# ---------- 科学：复数 / 不等式 / 级数扩展 ----------
 
 def sci_complex_eval(expr):
-    """把表达式按复数求值（I 已在 _LOCALS 中）。"""
     e = _parse(expr)
     try:
         return sp.N(e, 20)
@@ -998,12 +1012,7 @@ _INEQ_OPS = [
 
 
 def sci_solve_inequality(expr: str, var: str = "x"):
-    """求解不等式。支持链式：``-2 < x < 3`` 需写成 ``x>-2 and x<3``。
-
-    返回 sympy 的 And/Or 等对象。
-    """
     s = str(expr).strip()
-    # 判断是否链式（两个比较运算符）
     if re.match(r"^\s*[\w\.]+\s*<=\s*[\w\.]+\s*<=\s*[\w\.]+\s*$", s):
         parts = re.split(r"<=", s)
         a, b, c = parts
@@ -1017,7 +1026,6 @@ def sci_solve_inequality(expr: str, var: str = "x"):
         except Exception:
             pass
 
-    # 普通不等式
     for pat, op in _INEQ_OPS:
         if pat.search(s):
             left, right = pat.split(s, maxsplit=1)
@@ -1034,7 +1042,6 @@ def sci_solve_inequality(expr: str, var: str = "x"):
             except Exception as ex:  # noqa: BLE001
                 raise MathError(f"不等式求解失败：{ex}",
                                 friendly_key="err_math") from ex
-    # 退化：当成等式处理
     return sci_solve(expr, var)
 
 
@@ -1052,7 +1059,6 @@ _SERIES_KINDS = {
 
 def sci_series_ext(expr, var: str = "x", point: str = "0",
                    order: int = 6, kind: str = "taylor"):
-    """扩展级数展开。"""
     v = sp.Symbol(var.strip() or "x")
     e = _parse(expr)
     n = int(order)
@@ -1073,10 +1079,6 @@ def sci_series_ext(expr, var: str = "x", point: str = "0",
 
 
 def sci_steps_solve(expr: str, var: str = "x"):
-    """返回 (solution, steps) —— steps 是字符串列表。
-
-    与 sci_solve 不同，这里返回求解过程摘要，便于 UI 展示。
-    """
     s = str(expr).strip()
     if "=" in s:
         left, right = s.split("=", 1)
@@ -1104,14 +1106,11 @@ def sci_steps_solve(expr: str, var: str = "x"):
     return sols, steps
 
 
-# ---------- 进制：小数 / ASCII / 字节序 ----------
-
 def _digits_val(c: str) -> int:
     return _DIGITS.index(c.upper()) if c.upper() in _DIGITS else -1
 
 
 def base_convert_float(value, from_base, to_base, precision: int = 12):
-    """支持小数的进制转换（精度 = 小数位数）。"""
     try:
         fb, tb = int(from_base), int(to_base)
     except ValueError as e:
@@ -1133,13 +1132,11 @@ def base_convert_float(value, from_base, to_base, precision: int = 12):
     else:
         int_part, frac_part = s, ""
 
-    # 整数部分
     try:
         n = int(int_part or "0", fb)
     except ValueError as e:
         raise InputError(f"非法字符：{e}", friendly_key="err_base_char") from e
 
-    # 小数部分（按位累加）
     frac = 0.0
     for i, c in enumerate(frac_part):
         d = _digits_val(c)
@@ -1147,7 +1144,6 @@ def base_convert_float(value, from_base, to_base, precision: int = 12):
             raise InputError(f"非法字符：{c!r}", friendly_key="err_base_char")
         frac += d / (fb ** (i + 1))
 
-    # 转换
     if tb == 10:
         val = n + frac
         if frac:
@@ -1156,7 +1152,6 @@ def base_convert_float(value, from_base, to_base, precision: int = 12):
             out = str(n)
         return ("-" if sign == "-" else "") + out
 
-    # 整数部分转换
     if n == 0:
         int_out = "0"
     else:
@@ -1167,7 +1162,6 @@ def base_convert_float(value, from_base, to_base, precision: int = 12):
             m //= tb
         int_out = "".join(reversed(buf))
 
-    # 小数部分转换
     frac_out = ""
     if frac > 0:
         f = frac
@@ -1189,10 +1183,6 @@ def base_convert_float(value, from_base, to_base, precision: int = 12):
 
 
 def ascii_convert(text, mode: str = "encode"):
-    """mode='encode'：字符串 → 码点列表；
-    mode='decode'：码点列表（逗号/空格分隔） → 字符串。
-    返回字符串。
-    """
     if mode == "encode":
         s = str(text)
         if not s:
@@ -1210,7 +1200,6 @@ def ascii_convert(text, mode: str = "encode"):
         lines.append("十六进制: " + " ".join("0x" + h for h in hexes))
         return "\n".join(lines)
 
-    # decode
     raw = re.split(r"[\s,;]+", str(text).strip())
     codes = []
     for tok in raw:
@@ -1232,10 +1221,6 @@ def ascii_convert(text, mode: str = "encode"):
 
 
 def endian_swap(value, width: int = 32):
-    """按字节反转（大小端转换）。
-
-    返回 (swap_value, hex_be, hex_le)。
-    """
     try:
         w = int(width)
     except Exception:
@@ -1255,7 +1240,6 @@ def endian_swap(value, width: int = 32):
 
 
 def float_ieee754(value):
-    """返回单/双精度的 IEEE754 位表示。"""
     import struct
     try:
         v = float(value)
@@ -1273,11 +1257,8 @@ def float_ieee754(value):
     }
 
 
-# ---------- 矩阵：随机 / CSV / 方程组 / 步骤 ----------
-
 def matrix_random(rows: int, cols: int, kind: str = "int",
                   low=-9, high=9, seed=None):
-    """生成随机矩阵。kind: 'int' | 'float' | 'sym'。"""
     r, c = int(rows), int(cols)
     if r <= 0 or c <= 0:
         raise InputError("行列数须为正整数", friendly_key="err_input")
@@ -1298,7 +1279,6 @@ def matrix_random(rows: int, cols: int, kind: str = "int",
 
 
 def matrix_from_csv_text(text: str):
-    """从 CSV/TSV 文本解析矩阵（自动识别分隔符）。"""
     lines = [ln for ln in str(text).strip().splitlines() if ln.strip()]
     if not lines:
         raise InputError("CSV 为空", friendly_key="err_input")
@@ -1313,7 +1293,6 @@ def matrix_from_csv_text(text: str):
         else:
             cells = ln.split()
         rows.append([c.strip() for c in cells if c.strip() != ""])
-    # 补齐
     maxlen = max(len(r) for r in rows)
     for r in rows:
         while len(r) < maxlen:
@@ -1329,13 +1308,10 @@ def matrix_to_csv_text(A: sp.MatrixBase) -> str:
 
 
 def matrix_solve_linear(A_text, b_text):
-    """解线性方程组 Ax=b，返回 (solution, steps)。"""
     A = _parse_matrix(A_text)
-    # b 允许矩阵或列表
     try:
         b = _parse_matrix(b_text)
     except Exception:
-        # 尝试解析为 1D 列表
         raw = re.split(r"[\s,;]+", str(b_text).strip())
         b = sp.Matrix([sp.sympify(x) for x in raw if x])
 
@@ -1363,7 +1339,6 @@ def matrix_solve_linear(A_text, b_text):
 
 
 def matrix_inv_steps(A_text):
-    """求逆，附带行列式与伴随矩阵步骤信息。"""
     A = _parse_matrix(A_text)
     if A.rows != A.cols:
         raise MathError("非方阵无法求逆", friendly_key="err_math")
@@ -1373,8 +1348,8 @@ def matrix_inv_steps(A_text):
     if _is_singular(A):
         raise MathError("奇异矩阵不可逆", friendly_key="err_math")
     try:
-        adj = sp.simplify(A.adjugate())
-        steps.append(f"伴随矩阵 adj(A) 已计算")
+        _adj = sp.simplify(A.adjugate())
+        steps.append("伴随矩阵 adj(A) 已计算")
         inv = sp.simplify(A.inv())
         steps.append("A⁻¹ = adj(A)/det(A)")
         return inv, steps
@@ -1383,11 +1358,11 @@ def matrix_inv_steps(A_text):
 
 
 def _parse_lambda2(expr_text, vars_=("x", "y")):
-    """返回 f(X, Y) 供隐函数使用。"""
     syms = [sp.Symbol(v) for v in vars_]
     e = _parse(expr_text)
     f = sp.lambdify(syms, e, modules=["numpy"])
     return lambda X, Y: f(X, Y)
+
 
 # ===========================================================================
 # 第五轮新增：概率注册 / 3D 采样 / 插件桥
@@ -1420,7 +1395,6 @@ def prob_multi_regression(X, y):
 
 def sample_surface(expr, xmin, xmax, ymin, ymax,
                    nx=60, ny=60, var_x="x", var_y="y"):
-    """3D 曲面采样。"""
     vx = sp.Symbol(var_x)
     vy = sp.Symbol(var_y)
     e = _parse(expr)
@@ -1438,17 +1412,12 @@ def sample_surface(expr, xmin, xmax, ymin, ymax,
     Z[~np.isfinite(Z)] = np.nan
     return X, Y, Z
 
+
 # ===========================================================================
 # 第六轮新增：ODE / 数值积分 / 优化
 # ===========================================================================
 
 def sci_dsolve(eq_str, func="y", var="x", ics=None):
-    """ODE 求解。
-
-    例：
-        dsolve("y' + y = 0", func="y", var="x")
-        dsolve("y'' + y = 0", func="y", var="x", ics={0: 1})
-    """
     x = sp.Symbol(var)
     y = sp.Function(func)
 
@@ -1486,7 +1455,6 @@ def sci_dsolve(eq_str, func="y", var="x", ics=None):
 
 
 def sci_quad(expr, var="x", lower=0, upper=1):
-    """数值积分（scipy.integrate.quad）。"""
     v = sp.Symbol(var)
     e = _parse(expr)
     try:
@@ -1504,7 +1472,6 @@ def sci_quad(expr, var="x", lower=0, upper=1):
 
 
 def sci_minimize(expr, var="x", x0=0, method="BFGS"):
-    """一元函数数值最小化。"""
     v = sp.Symbol(var)
     e = _parse(expr)
     try:
@@ -1528,16 +1495,9 @@ def sci_minimize(expr, var="x", x0=0, method="BFGS"):
 
 
 def sci_linprog(params_json):
-    """线性规划。
-
-    params_json 例：
-        {"c":[1,2],
-         "A_ub":[[1,1],[1,-1]],
-         "b_ub":[10,2],
-         "bounds":[[0,null],[0,null]]}
-    """
     try:
-        p = _json.loads(params_json) if isinstance(params_json, str) else params_json
+        p = (_json.loads(params_json) if isinstance(params_json, str)
+             else params_json)
     except Exception as ex:
         raise InputError(f"JSON 解析失败：{ex}",
                          friendly_key="err_input") from ex
