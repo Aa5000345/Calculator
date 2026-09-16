@@ -17,6 +17,8 @@ class BasePanel(CalcPanel):
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
         self._live = True
+        # 显式保存 widget -> base 的映射，避免 sender() 脆弱
+        self._live_map: dict = {}
 
         self.in_dec = QLineEdit("255")
         self.in_hex = QLineEdit("FF")
@@ -24,7 +26,10 @@ class BasePanel(CalcPanel):
         self.in_oct = QLineEdit("377")
         for w, base in ((self.in_dec, 10), (self.in_hex, 16),
                         (self.in_bin, 2), (self.in_oct, 8)):
-            w.textChanged.connect(lambda _t, b=base: self._on_live(b))
+            self._live_map[w] = base
+            # 使用 lambda 显式捕获 (base, widget)，彻底摆脱 sender()
+            w.textChanged.connect(
+                lambda _t, b=base, ww=w: self._on_live(b, ww))
 
         self.value = QLineEdit("255")
         self.from_b = QLineEdit("10")
@@ -116,33 +121,60 @@ class BasePanel(CalcPanel):
         main.addWidget(QLabel(i18n.t("result")))
         main.addWidget(self.result, 1)
 
-    def _on_live(self, base):
+    # ------------------------------------------------------------------
+
+    def _on_live(self, base: int, sender_widget=None):
+        """实时联动 4 个进制输入框。
+
+        修复：
+        - 使用显式 sender_widget，而非脆弱的 self.sender()。
+        - 支持小数：使用 base_convert_float 而非 base_convert。
+        - 无论源进制是什么，全部转换为十进制再做中转，保证精度一致。
+        """
         if not self._live:
             return
+        if sender_widget is None:
+            return
         try:
-            sender = self.sender()
-            text = sender.text().strip()
-            if not text:
-                return
-            self._live = False
-            try:
-                if base == 10:
-                    self.in_hex.setText(engine.base_convert(text, 10, 16))
-                    self.in_bin.setText(engine.base_convert(text, 10, 2))
-                    self.in_oct.setText(engine.base_convert(text, 10, 8))
-                else:
-                    dec = engine.base_convert(text, base, 10)
-                    self.in_dec.setText(dec)
-                    for w, b in ((self.in_hex, 16), (self.in_bin, 2),
-                                 (self.in_oct, 8)):
-                        if b != base:
-                            w.setText(engine.base_convert(dec, 10, b))
-                        elif w is not sender:
-                            w.setText(engine.base_convert(dec, 10, b))
-            finally:
-                self._live = True
+            text = sender_widget.text().strip()
         except Exception:
+            return
+        if not text:
+            return
+
+        self._live = False
+        try:
+            if base == 10:
+                # 源为十进制：向其他三个目标进制转换
+                for w, b in self._live_map.items():
+                    if w is sender_widget:
+                        continue
+                    try:
+                        w.setText(engine.base_convert_float(
+                            text, 10, b, 12))
+                    except Exception:
+                        pass
+            else:
+                # 源为其他进制：先转十进制，再分发
+                try:
+                    dec = engine.base_convert_float(text, base, 10, 12)
+                except Exception:
+                    return
+                self.in_dec.setText(dec)
+                for w, b in self._live_map.items():
+                    if w is sender_widget or b == 10:
+                        continue
+                    try:
+                        w.setText(engine.base_convert_float(
+                            dec, 10, b, 12))
+                    except Exception:
+                        pass
+        finally:
             self._live = True
+
+    # ------------------------------------------------------------------
+    # 其余方法保持不变（convert / _do_ascii / _do_endian / _do_ieee）
+    # ------------------------------------------------------------------
 
     def convert(self):
         try:

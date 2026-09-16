@@ -64,6 +64,13 @@ class PlotPanel(CalcPanel):
         self.deriv_chk = QCheckBox(i18n.t("show_derivative", "Show derivative"))
         self.interact_chk = QCheckBox(i18n.t("interactive", "Interactive pan/zoom"))
         self.interact_chk.setChecked(True)
+        # 新增：LaTeX 标签
+        self.latex_chk = QCheckBox(i18n.t("latex_labels", "LaTeX 标签"))
+        self.latex_chk.setChecked(
+            bool(settings.get("plot_latex_labels", False)))
+        self.latex_chk.stateChanged.connect(
+            lambda _: settings.set("plot_latex_labels",
+                                   self.latex_chk.isChecked()))
 
         self.figure = Figure(figsize=(6, 4))
         self.canvas = FigureCanvas(self.figure)
@@ -79,7 +86,7 @@ class PlotPanel(CalcPanel):
 
         opts = QHBoxLayout()
         for w in (self.grid_chk, self.legend_chk, self.deriv_chk,
-                  self.interact_chk):
+                  self.interact_chk, self.latex_chk):
             opts.addWidget(w)
         opts.addStretch(1)
 
@@ -98,6 +105,17 @@ class PlotPanel(CalcPanel):
 
         self.add_curve("sin(x)", "cartesian", "-10", "10")
         self.add_curve("cos(x)", "cartesian", "-10", "10")
+
+    # ------------------------------------------------------------------
+
+    def _safe_label(self, expr: str) -> str:
+        """LaTeX 标签：启用时用 $...$ 包裹；matplotlib 会自动回退纯文本。"""
+        s = (expr or "").strip()
+        if not s:
+            return s
+        if not self.latex_chk.isChecked():
+            return s
+        return f"${s}$"
 
     def _next_color(self):
         c = self.PALETTE[self._color_index % len(self.PALETTE)]
@@ -152,6 +170,8 @@ class PlotPanel(CalcPanel):
         it = self.table.item(row, col)
         return it.text().strip() if it else ""
 
+    # ------------------------------------------------------------------
+
     def plot(self):
         try:
             self.figure.clear()
@@ -186,26 +206,33 @@ class PlotPanel(CalcPanel):
                                 f"row {row+1}: " +
                                 self.i18n.t('err_plot_empty_domain', 'Empty domain'))
                             continue
-                        ax.plot(xs, ys, color=color, linewidth=1.6, label=expr)
+                        label_text = self._safe_label(expr)
+                        ax.plot(xs, ys, color=color, linewidth=1.6,
+                                label=label_text)
                         plotted += 1
                         if self.deriv_chk.isChecked():
                             try:
                                 dx = engine.sci_diff(expr, "x", 1)
                                 xsd, ysd = engine.sample_cartesian(str(dx), start, end)
+                                d_label = self._safe_label(
+                                    f"d/dx({expr})")
                                 ax.plot(xsd, ysd, color=color, linestyle="--",
                                         linewidth=1.2, alpha=0.75,
-                                        label=f"d/dx({expr})")
+                                        label=d_label)
                             except Exception as ee:
                                 errors.append(f"d/dx row {row+1}: {ee}")
                     elif kind == "polar":
                         xs, ys = engine.sample_polar(expr, start, end)
-                        ax.plot(xs, ys, color=color, linewidth=1.6, label=f"r = {expr}")
+                        p_label = self._safe_label(f"r = {expr}")
+                        ax.plot(xs, ys, color=color, linewidth=1.6,
+                                label=p_label)
                         plotted += 1
                     elif kind == "parametric":
                         ys_expr = expr2 or "t"
                         xs, ys = engine.sample_parametric(expr, ys_expr, start, end)
+                        pm_label = self._safe_label(f"({expr}, {ys_expr})")
                         ax.plot(xs, ys, color=color, linewidth=1.6,
-                                label=f"({expr}, {ys_expr})")
+                                label=pm_label)
                         plotted += 1
                     elif kind == "implicit":
                         implicit.append((expr, color, (start, end)))
@@ -213,8 +240,9 @@ class PlotPanel(CalcPanel):
                         try:
                             F = engine.sci_integrate(expr, "x")
                             xs, ys = engine.sample_cartesian(str(F), start, end)
+                            i_label = self._safe_label(f"∫({expr})dx")
                             ax.plot(xs, ys, color=color, linewidth=1.4,
-                                    linestyle=":", label=f"∫({expr})dx")
+                                    linestyle=":", label=i_label)
                             plotted += 1
                         except Exception as ee:
                             errors.append(f"∫ row {row+1}: {ee}")

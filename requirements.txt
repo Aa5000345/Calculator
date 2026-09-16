@@ -14,3 +14,13 @@ cryptography>=42.0
 lunardate>=0.2
 astral>=3.2
 qrcode[pil]>=7.4
+
+# ---- 可选：高级输入方式 ----
+# 手写 / 截图 OCR（LaTeX 识别，需要 torch，约 2GB 磁盘）
+# pip install pix2tex
+#
+# 语音输入（离线；如需启用可后续扩展）
+# pip install vosk
+#
+# 本地 LLM（AI 助手可选后端）
+# https://ollama.com/

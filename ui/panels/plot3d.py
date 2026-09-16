@@ -271,5 +271,43 @@ class Plot3DPanel(CalcPanel):
             log_exc(e, module="Plot3DPanel.export_gif")
             QMessageBox.warning(self, "Error", str(e))
 
+    def closeEvent(self, e):
+        """窗口关闭时停掉所有定时器与动画，避免 timer 泄漏。
+
+        - 停止 FuncAnimation（若正在播放）
+        - 停止自动旋转 QTimer
+        - 清空 figure，释放 matplotlib 引用
+        """
+        try:
+            self.stop_anim()
+        except Exception:
+            pass
+        try:
+            if self._rot_timer is not None:
+                self._rot_timer.stop()
+                self._rot_timer = None
+        except Exception:
+            pass
+        try:
+            self.figure.clear()
+        except Exception:
+            pass
+        try:
+            super().closeEvent(e)
+        except Exception:
+            pass
+
+    def hideEvent(self, e):
+        """隐藏时也停掉定时器（例如切换模块）。"""
+        try:
+            if self._rot_timer is not None and self._rot_timer.isActive():
+                self._rot_timer.stop()
+        except Exception:
+            pass
+        try:
+            super().hideEvent(e)
+        except Exception:
+            pass
+        
     def set_theme_colors(self, fg, bg, panel):
         self._fg, self._bg, self._panel = fg, bg, panel

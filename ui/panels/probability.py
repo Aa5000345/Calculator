@@ -17,6 +17,7 @@ from core import probability as prob
 from core.logger import log_exc
 from ._common import ResultView
 from .base import CalcPanel
+from ._common import ResultView, InlinePreviewBar
 
 
 class ProbabilityPanel(CalcPanel):
@@ -38,6 +39,12 @@ class ProbabilityPanel(CalcPanel):
         self.x = QLineEdit("0")
         self.p = QLineEdit("0.95")
         self.n = QLineEdit("1000")
+        self._dist_preview = InlinePreviewBar(calc_fn=self._preview_pdf)
+        self._dist_preview.attach(self.x, enabled_getter=lambda: True)
+        self.dist.currentIndexChanged.connect(
+            lambda _: self._dist_preview.refresh(self.x.text()))
+        self.params.editingFinished.connect(
+            lambda: self._dist_preview.refresh(self.x.text()))
 
         self.plot_range = QLineEdit("-4, 4")
         self.plot_points = QLineEdit("300")
@@ -95,6 +102,7 @@ class ProbabilityPanel(CalcPanel):
         f1.addRow(QLabel(i18n.t("prob_dist", "分布")), self.dist)
         f1.addRow(QLabel(i18n.t("prob_params", "参数 JSON")), self.params)
         f1.addRow(QLabel("x"), self.x)
+        f1.addRow(QLabel(""), self._dist_preview)   # ← 预览条
         f1.addRow(QLabel("p"), self.p)
         f1.addRow(QLabel("n"), self.n)
         f1.addRow(QLabel(i18n.t("plot_range", "绘图范围")), self.plot_range)
@@ -199,6 +207,25 @@ class ProbabilityPanel(CalcPanel):
     # 计算
     # ------------------------------------------------------------------
 
+
+    def _preview_pdf(self, _text):
+        """x 变化时实时预览 PDF / PMF 值。"""
+        try:
+            name = self.dist.currentData()
+            params = self._params()
+            xv = float(self.x.text())
+            v = prob.pdf_or_pmf(name, xv, params)
+            # 展示用：保留 4 位有效数字
+            try:
+                disp = f"{v:.4g}"
+            except Exception:
+                disp = str(v)
+            is_discrete = name in ("binom", "poisson", "geom")
+            tag = "PMF" if is_discrete else "PDF"
+            return f"{tag}({name}, x={xv:g}) = {disp}"
+        except Exception:
+            return None
+        
     def do_pdf(self):
         try:
             v = prob.pdf_or_pmf(self.dist.currentData(),

@@ -1,5 +1,11 @@
-"""LaTeX 渲染组件：基于 matplotlib mathtext，无额外依赖。"""
+"""LaTeX 渲染组件：基于 matplotlib mathtext，无额外依赖。
+
+使用 functools.lru_cache 缓存渲染结果（线程安全，容量 512）。
+"""
+from __future__ import annotations
+
 import io
+from functools import lru_cache
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
@@ -8,15 +14,15 @@ from PySide6.QtWidgets import QLabel
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-_CACHE = {}
-_MAX_CACHE = 512
 
+@lru_cache(maxsize=512)
+def _render_bytes_cached(latex: str, fontsize: int, dpi: int,
+                         color: str) -> bytes | None:
+    """渲染 LaTeX 到 PNG 字节。
 
-def _render_bytes(latex: str, fontsize: int, dpi: int, color: str):
-    key = (latex, fontsize, dpi, color)
-    if key in _CACHE:
-        return _CACHE[key]
-
+    用 lru_cache 缓存；参数全部可哈希（str / int）。
+    返回 None 表示渲染失败（会缓存 None，避免重复尝试）。
+    """
     fig = Figure(figsize=(0.01, 0.01), dpi=dpi)
     fig.patch.set_alpha(0.0)
     try:
@@ -35,11 +41,25 @@ def _render_bytes(latex: str, fontsize: int, dpi: int, color: str):
     finally:
         fig.clear()
 
-    data = buf.getvalue()
-    if len(_CACHE) > _MAX_CACHE:
-        _CACHE.clear()
-    _CACHE[key] = data
-    return data
+    return buf.getvalue()
+
+
+def _render_bytes(latex: str, fontsize: int, dpi: int,
+                  color: str) -> bytes | None:
+    """包装：把不可哈希的入参规范化后调用缓存版本。"""
+    try:
+        return _render_bytes_cached(str(latex), int(fontsize),
+                                    int(dpi), str(color))
+    except Exception:
+        return None
+
+
+def clear_cache():
+    """手动清空缓存（例如主题切换后）。"""
+    try:
+        _render_bytes_cached.cache_clear()
+    except Exception:
+        pass
 
 
 class LatexLabel(QLabel):
@@ -71,7 +91,8 @@ class LatexLabel(QLabel):
             self.setPixmap(QPixmap())
             self.setText(self._fallback)
             return
-        data = _render_bytes(self._latex, self.fontsize, self.dpi, self._color)
+        data = _render_bytes(self._latex, self.fontsize, self.dpi,
+                             self._color)
         if data is None:
             self.setPixmap(QPixmap())
             self.setText(self._fallback)

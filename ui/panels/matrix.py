@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from core import engine
 from core.logger import log_exc
-from ._common import ResultView, friendly_error
+from ._common import ResultView, friendly_error, InlinePreviewBar
 from .base import CalcPanel
 
 
@@ -24,6 +24,9 @@ class MatrixPanel(CalcPanel):
              "exp", "norm", "power"]
     BINARY = ["mat_add", "mat_sub", "mat_mul", "mat_hadamard",
               "mat_kron", "mat_solve", "mat_lstsq"]
+
+    # 预览时允许的最大矩阵阶数（保护实时体验）
+    PREVIEW_MAX_DIM = 3
 
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
@@ -109,7 +112,18 @@ class MatrixPanel(CalcPanel):
         btn.clicked.connect(self.calc)
         self.result = ResultView(i18n)
 
-        # B 编辑器包装成 widget，便于整体显隐
+        # --- 幂预览（InlinePreviewBar）---
+        self._power_preview = InlinePreviewBar(calc_fn=self._preview_power)
+        self._power_preview.attach(self.scalar, enabled_getter=lambda: True)
+        # 编辑 A 或 B 时也触发刷新（矩阵单元格变化时只刷新一次）
+        self.a_table.itemChanged.connect(
+            lambda _: self._power_preview.refresh(self.scalar.text()))
+        self.a_rows.valueChanged.connect(
+            lambda _: self._power_preview.refresh(self.scalar.text()))
+        self.a_cols.valueChanged.connect(
+            lambda _: self._power_preview.refresh(self.scalar.text()))
+
+        # B 编辑器
         self.b_editor = QWidget()
         be = QVBoxLayout(self.b_editor)
         be.setContentsMargins(0, 0, 0, 0)
@@ -150,6 +164,7 @@ class MatrixPanel(CalcPanel):
         op_row.setLabelAlignment(Qt.AlignRight)
         op_row.addRow(QLabel(i18n.t("operation")), self.op)
         op_row.addRow(QLabel(""), self.scalar_row_widget)
+        op_row.addRow(QLabel(""), self._power_preview)   # 预览条
         op_row.addRow(QLabel(i18n.t("result_format")), self.fmt)
         op_row.addRow(QLabel(""), self.show_steps)
 
@@ -182,6 +197,47 @@ class MatrixPanel(CalcPanel):
         main.addWidget(self.result, 2)
 
         self._update_params()
+
+    # ------------------------------------------------------------------
+    # 幂预览
+    # ------------------------------------------------------------------
+
+    def _preview_power(self, _text):
+        """A^n 实时预览：仅在 op == power 时启用。
+
+        - 非方阵 → 提示
+        - 阶数 > PREVIEW_MAX_DIM → 只显示尺寸
+        - 小矩阵 → 实际计算一行显示
+        """
+        try:
+            if self.op.currentData() != "power":
+                return None
+            n_txt = self.scalar.text().strip()
+            if not n_txt:
+                return None
+            n = int(n_txt)
+
+            rows = self.a_table.rowCount()
+            cols = self.a_table.columnCount()
+            if rows != cols:
+                return f"A^{n}：非方阵，无法计算"
+
+            if rows > self.PREVIEW_MAX_DIM:
+                return f"A^{n}  ({rows}×{cols})"
+
+            a_text = self._table_to_text(self.a_table)
+            r = engine.matrix_unary("power", a_text, str(n))
+            cells = []
+            for i in range(r.rows):
+                row = ", ".join(str(r[i, j]) for j in range(r.cols))
+                cells.append(f"[{row}]")
+            return f"A^{n} = " + "  ".join(cells)
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # 表格管理
+    # ------------------------------------------------------------------
 
     def _rebuild_table(self, table, rows, cols, init=None):
         if self._updating:
@@ -216,6 +272,8 @@ class MatrixPanel(CalcPanel):
     def _table_to_text(self, table):
         rows = self._table_data(table)
         return "[" + ",".join("[" + ",".join(r) + "]" for r in rows) + "]"
+
+    # ------------------------------------------------------------------
 
     def _random_a(self):
         try:
@@ -265,13 +323,14 @@ class MatrixPanel(CalcPanel):
             QMessageBox.warning(self, "Error", str(e))
 
     def _update_params(self, *_):
-        """修复：二元操作时显示 B 编辑器；power 时显示标量输入。"""
         op = self.op.currentData()
         is_binary = op in self.BINARY
         is_power = (op == "power")
         try:
             self.b_editor.setVisible(is_binary)
             self.scalar_row_widget.setVisible(is_power)
+            # 触发预览刷新（若切到 power，输入框里的旧值会立即显示）
+            self._power_preview.refresh(self.scalar.text())
         except Exception:
             pass
 

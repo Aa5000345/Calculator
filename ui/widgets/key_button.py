@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QPushButton, QSizePolicy
 
 from .keyboard_layouts import Key
 
@@ -21,8 +21,8 @@ class KeyButton(QPushButton):
         self._second = False
         self.setFocusPolicy(Qt.NoFocus)
         self.setMinimumSize(36, 32)
-        self.setSizePolicy(self.sizePolicy().Expanding,
-                           self.sizePolicy().Expanding)
+        # ⚠ 修复：Expanding 是 QSizePolicy 类的枚举，不是实例属性
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         if key.tooltip:
             self.setToolTip(key.tooltip)
         self.clicked.connect(self._on_click)

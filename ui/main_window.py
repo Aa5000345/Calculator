@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+import re
 
 from PySide6.QtCore import Qt, QTimer, QFileSystemWatcher
-from PySide6.QtGui import QAction, QGuiApplication
+from PySide6.QtGui import (
+    QAction, QGuiApplication, QKeySequence, QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
@@ -28,6 +32,10 @@ from core import plugins as plugin_mod
 from core import snippets as snip_mod
 from ui.panels.registry import all_panels
 
+
+# ---------------------------------------------------------------------------
+# 常量
+# ---------------------------------------------------------------------------
 
 DEFAULT_GROUPS = [
     ("基础", ["basic", "scientific"]),
@@ -72,6 +80,14 @@ _MODULE_PREFIX_MAP = (
 )
 
 
+# 保存分组原始名称的 role，避免搜索时被 "(N)" 后缀污染
+_GROUP_NAME_ROLE = Qt.UserRole + 1
+
+
+# ---------------------------------------------------------------------------
+# 上下文对象
+# ---------------------------------------------------------------------------
+
 class _Ctx:
     def __init__(self, base_path, settings, i18n, history,
                  main_window, reuse_handler):
@@ -82,6 +98,10 @@ class _Ctx:
         self.main_window = main_window
         self.reuse_handler = reuse_handler
 
+
+# ---------------------------------------------------------------------------
+# MainWindow
+# ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
     def __init__(self, base_path, settings, i18n, history):
@@ -99,6 +119,12 @@ class MainWindow(QMainWindow):
         self._split = None
         self._force_quit = False
         self._keyboard = None
+
+        # 专注模式
+        self._focus_mode = False
+        self._focus_saved = {}
+        self._focus_exit_btn = None
+        self._focus_shortcut = None
 
         self._restore_geometry()
         self._build()
@@ -122,6 +148,13 @@ class MainWindow(QMainWindow):
         if self.settings.get("keyboard_visible", False):
             QTimer.singleShot(200, self._show_keyboard_initial)
 
+        # URL 参数传入的初始表达式
+        QTimer.singleShot(300, self._consume_init_expr)
+
+    # ------------------------------------------------------------------
+    # 几何
+    # ------------------------------------------------------------------
+
     def _show_keyboard_initial(self):
         try:
             kb = self._ensure_keyboard()
@@ -129,8 +162,6 @@ class MainWindow(QMainWindow):
             kb.raise_()
         except Exception:
             pass
-
-    # ---------------- 几何 ----------------
 
     def _restore_geometry(self):
         geom = self.settings.get("window_geometry")
@@ -143,7 +174,19 @@ class MainWindow(QMainWindow):
                 pass
         self.resize(1280, 880)
 
-    # ---------------- 构建 ----------------
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 专注模式下浮动按钮保持在右上角
+        if self._focus_mode and self._focus_exit_btn is not None:
+            try:
+                btn = self._focus_exit_btn
+                btn.move(max(10, self.width() - btn.width() - 24), 12)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # 构建
+    # ------------------------------------------------------------------
 
     def _build(self):
         self.setWindowTitle(self.i18n.t("app_title"))
@@ -241,6 +284,8 @@ class MainWindow(QMainWindow):
             b.send_to_snippet.connect(self._on_send_to_snippet)
             b.send_to_plot.connect(self._on_send_to_plot)
             b.send_to_unit.connect(self._on_send_to_unit_view)
+            b.send_to_script.connect(self._on_send_to_script)
+            b.clipboard_expr.connect(self._on_clipboard_expr)
         except Exception as e:
             log_exc(e, module="MainWindow._wire_signals")
 
@@ -251,7 +296,9 @@ class MainWindow(QMainWindow):
         self._panel_group[key] = group
         self.stack.addWidget(widget)
 
-    # ---------------- 树 ----------------
+    # ------------------------------------------------------------------
+    # 树
+    # ------------------------------------------------------------------
 
     def _default_groups(self):
         return [(name, list(keys)) for name, keys in DEFAULT_GROUPS]
@@ -283,7 +330,9 @@ class MainWindow(QMainWindow):
         expanded = {}
         for i in range(self.tree.topLevelItemCount()):
             p = self.tree.topLevelItem(i)
-            expanded[p.text(0)] = p.isExpanded()
+            base = p.data(0, _GROUP_NAME_ROLE) or p.text(0)
+            base = re.sub(r"\s*\(\d+\)\s*$", "", base)
+            expanded[base] = p.isExpanded()
 
         groups = self._load_groups()
         self._panel_group = {k: n for n, keys in groups for k in keys}
@@ -293,6 +342,7 @@ class MainWindow(QMainWindow):
 
         for name, keys in groups:
             parent = QTreeWidgetItem([name])
+            parent.setData(0, _GROUP_NAME_ROLE, name)  # 保存原始名
             parent.setFlags(
                 (parent.flags() | Qt.ItemIsDropEnabled) & ~Qt.ItemIsSelectable)
             font = parent.font(0)
@@ -308,29 +358,58 @@ class MainWindow(QMainWindow):
             parent.setExpanded(expanded.get(name, True))
 
     def _apply_filter(self, text):
+        """过滤模块树。
+
+        - 搜索为空：按 visible_modules 隐藏
+        - 搜索非空：文本匹配 且 visible_modules 为真 才显示
+        - 分组头显示 "(N)" 计数（搜索时）
+        """
         text = (text or "").strip().lower()
+
         for i in range(self.tree.topLevelItemCount()):
             parent = self.tree.topLevelItem(i)
+            parent_name = parent.data(0, _GROUP_NAME_ROLE) or parent.text(0)
+            parent_name = re.sub(r"\s*\(\d+\)\s*$", "", parent_name)
+
             any_visible = False
+            visible_count = 0
+
             for j in range(parent.childCount()):
                 child = parent.child(j)
                 key = child.data(0, Qt.UserRole)
                 title = child.text(0)
+                is_visible = bool(self.settings.is_module_visible(key))
+
                 if not text:
-                    hidden = not self.settings.is_module_visible(key)
+                    hidden = not is_visible
                     child.setHidden(hidden)
                     if not hidden:
                         any_visible = True
+                        visible_count += 1
+                    continue
+
+                # 搜索模式：不可见模块始终隐藏
+                if not is_visible:
+                    child.setHidden(True)
+                    continue
+
+                s1 = _fuzzy_score(text, title)
+                s2 = _fuzzy_score(text, str(key or ""))
+                s3 = _fuzzy_score(text, parent_name)
+                if max(s1, s2, s3) > 0:
+                    child.setHidden(False)
+                    any_visible = True
+                    visible_count += 1
                 else:
-                    s1 = _fuzzy_score(text, title)
-                    s2 = _fuzzy_score(text, str(key or ""))
-                    s3 = _fuzzy_score(text, parent.text(0))
-                    if max(s1, s2, s3) > 0:
-                        child.setHidden(False)
-                        any_visible = True
-                    else:
-                        child.setHidden(True)
+                    child.setHidden(True)
+
             parent.setHidden(not any_visible)
+
+            if text and any_visible:
+                parent.setText(0, f"{parent_name} ({visible_count})")
+            else:
+                parent.setText(0, parent_name)
+
             if text and any_visible:
                 parent.setExpanded(True)
 
@@ -352,12 +431,16 @@ class MainWindow(QMainWindow):
                     if k:
                         keys.append(k)
                 if keys:
-                    groups.append({"name": parent.text(0), "keys": keys})
+                    name = parent.data(0, _GROUP_NAME_ROLE) or parent.text(0)
+                    name = re.sub(r"\s*\(\d+\)\s*$", "", name)
+                    groups.append({"name": name, "keys": keys})
             self.settings.set("module_groups", groups, notify=False)
         except Exception as e:
             log_exc(e, module="main_window._on_tree_rows_moved")
 
-    # ---------------- 切换 ----------------
+    # ------------------------------------------------------------------
+    # 切换
+    # ------------------------------------------------------------------
 
     def switch_to_key(self, key):
         widget = self._panels.get(key)
@@ -369,7 +452,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # 通知浮动键盘切换布局（如果已经创建）
         if self._keyboard is not None:
             try:
                 self._keyboard.set_module(key)
@@ -434,7 +516,9 @@ class MainWindow(QMainWindow):
         self.search_box.setVisible(self.tree.isVisible())
         self.vis_btn.setVisible(self.tree.isVisible())
 
-    # ---------------- 浮动键盘 ----------------
+    # ------------------------------------------------------------------
+    # 浮动键盘
+    # ------------------------------------------------------------------
 
     def _ensure_keyboard(self):
         if self._keyboard is None:
@@ -452,7 +536,6 @@ class MainWindow(QMainWindow):
         kb = self._ensure_keyboard()
         if kb is None:
             return
-        # 同步当前模块布局
         try:
             cur = self.stack.currentWidget()
             for k, w in self._panels.items():
@@ -480,7 +563,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="MainWindow._on_keyboard_equals")
 
-    # ---------------- 跨面板发送 ----------------
+    # ------------------------------------------------------------------
+    # 跨面板发送
+    # ------------------------------------------------------------------
 
     def _on_send_to_unit_view(self, _text):
         try:
@@ -546,7 +631,88 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="MainWindow._on_send_to_plot")
 
-    # ---------------- 可见性 ----------------
+    def _on_send_to_script(self, text):
+        try:
+            self._switch_by_key_pub("script")
+            panel = self._panels.get("script")
+            if panel is not None and hasattr(panel, "editor"):
+                try:
+                    panel.editor.setPlainText(str(text))
+                except Exception:
+                    pass
+        except Exception as e:
+            log_exc(e, module="MainWindow._on_send_to_script")
+
+    # ------------------------------------------------------------------
+    # 剪贴板智能识别
+    # ------------------------------------------------------------------
+
+    def _on_clipboard_expr(self, text):
+        """剪贴板检测到表达式：toast 提示 + 点击送往基础面板。"""
+        try:
+            preview = (text or "").strip().replace("\n", " ")[:60]
+            if not preview:
+                return
+        except Exception:
+            return
+
+        def _go():
+            try:
+                self.settings.set_draft("basic_expr", text)
+                self._switch_by_key_pub("basic")
+                panel = self._panels.get("basic")
+                if panel is not None:
+                    w = getattr(panel, "expr", None)
+                    if w is not None and hasattr(w, "setText"):
+                        w.setText(text)
+                        if hasattr(w, "setFocus"):
+                            w.setFocus()
+                self.show_toast(
+                    self.i18n.t("clipboard_sent_basic",
+                                "已发送到基础面板"),
+                    level="success", duration=1500)
+            except Exception as e:
+                log_exc(e, module="MainWindow._on_clipboard_expr._go")
+
+        try:
+            from ui.toast import toast as toast_fn
+            toast_fn(self, f"📋 {preview}",
+                     level="info", duration=3500, on_click=_go)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # URL 初始表达式
+    # ------------------------------------------------------------------
+
+    def _consume_init_expr(self):
+        """消费由 main.py 通过环境变量传入的初始表达式。"""
+        try:
+            expr = os.environ.pop("MULTICALC_INIT_EXPR", "")
+        except Exception:
+            expr = ""
+        if not expr:
+            return
+        try:
+            self.settings.set_draft("basic_expr", expr)
+            self._switch_by_key_pub("basic")
+            panel = self._panels.get("basic")
+            if panel is not None:
+                w = getattr(panel, "expr", None)
+                if w is not None and hasattr(w, "setText"):
+                    w.setText(expr)
+                    if hasattr(w, "setFocus"):
+                        w.setFocus()
+            self.show_toast(
+                f"{self.i18n.t('init_expr_loaded', '已加载表达式')}: "
+                f"{expr[:60]}",
+                level="info", duration=3000)
+        except Exception as e:
+            log_exc(e, module="MainWindow._consume_init_expr")
+
+    # ------------------------------------------------------------------
+    # 可见性
+    # ------------------------------------------------------------------
 
     def _apply_visibility(self):
         self._apply_filter(self.search_box.text())
@@ -610,7 +776,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="main_window._rebuild_tree_and_filter")
 
-    # ---------------- 历史复用 ----------------
+    # ------------------------------------------------------------------
+    # 历史复用
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _normalize_module_key(module):
@@ -657,7 +825,9 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    # ---------------- 热重载 ----------------
+    # ------------------------------------------------------------------
+    # 热重载
+    # ------------------------------------------------------------------
 
     def _on_settings_changed(self, key=None):
         try:
@@ -712,7 +882,9 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-    # ---------------- 重建 ----------------
+    # ------------------------------------------------------------------
+    # 重建
+    # ------------------------------------------------------------------
 
     def rebuild(self):
         try:
@@ -772,7 +944,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="main_window.rebuild")
 
-    # ---------------- 主题 ----------------
+    # ------------------------------------------------------------------
+    # 主题
+    # ------------------------------------------------------------------
 
     def _resolve_theme(self) -> str:
         theme = self.settings.get("theme", "dark")
@@ -876,7 +1050,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="main_window.apply_theme")
 
-    # ---------------- 布局 ----------------
+    # ------------------------------------------------------------------
+    # 布局
+    # ------------------------------------------------------------------
 
     def _save_layout(self):
         try:
@@ -915,7 +1091,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="main_window._restore_layout")
 
-    # ---------------- 菜单 ----------------
+    # ------------------------------------------------------------------
+    # 菜单
+    # ------------------------------------------------------------------
 
     def _build_menu(self):
         bar = self.menuBar()
@@ -951,6 +1129,47 @@ class MainWindow(QMainWindow):
         a_vis.triggered.connect(self.open_visibility_dialog)
         m_view.addAction(a_vis)
 
+        m_view.addSeparator()
+
+        # 手写 / OCR / AI 批量
+        a_hand = QAction(
+            self.i18n.t("handwriting_title", "手写输入…"), self)
+        a_hand.setShortcut("Ctrl+Shift+H")
+        a_hand.triggered.connect(self.open_handwriting)
+        m_view.addAction(a_hand)
+
+        a_ocr = QAction(
+            self.i18n.t("ocr_title", "截图 / 图片识别…"), self)
+        a_ocr.setShortcut("Ctrl+Shift+O")
+        a_ocr.triggered.connect(self.open_ocr_input)
+        m_view.addAction(a_ocr)
+
+        a_batch = QAction(
+            self.i18n.t("ai_batch_tab", "AI 批量翻译…"), self)
+        a_batch.triggered.connect(self.open_ai_batch)
+        m_view.addAction(a_batch)
+
+        m_view.addSeparator()
+
+        # 专注模式（用独立 QShortcut 触发，见下方注册）
+        a_focus = QAction(
+            self.i18n.t("focus_mode", "专注模式 (F11)"), self)
+        a_focus.triggered.connect(self.toggle_focus_mode)
+        m_view.addAction(a_focus)
+
+        # 会话导入
+        a_session = QAction(
+            self.i18n.t("import_session", "打开 .mcsession…"), self)
+        a_session.triggered.connect(self.import_session)
+        m_view.addAction(a_session)
+
+        # 独立 QShortcut 注册 F11：菜单栏隐藏后仍生效
+        sc_focus = QShortcut(QKeySequence("F11"), self)
+        sc_focus.setContext(Qt.ApplicationShortcut)
+        sc_focus.activated.connect(self.toggle_focus_mode)
+        self._focus_shortcut = sc_focus
+
+        # ---------- 工具菜单 ----------
         m_tools = bar.addMenu(self.i18n.t("menu_tools", "Tools"))
         a_upd = QAction(self.i18n.t("check_update", "Check for updates"), self)
         a_upd.triggered.connect(self._check_update)
@@ -964,7 +1183,17 @@ class MainWindow(QMainWindow):
         a_tray.triggered.connect(self._toggle_tray)
         m_tools.addAction(a_tray)
 
-    # ---------------- 命令面板 ----------------
+        # ---------- 帮助菜单 ----------
+        m_help = bar.addMenu(self.i18n.t("menu_help", "帮助"))
+        a_help = QAction(
+            self.i18n.t("shortcuts_title", "快捷键速查表"), self)
+        a_help.setShortcut("F1")
+        a_help.triggered.connect(self._show_shortcuts)
+        m_help.addAction(a_help)
+
+    # ------------------------------------------------------------------
+    # 命令面板
+    # ------------------------------------------------------------------
 
     def _collect_commands(self):
         cmds = []
@@ -1063,7 +1292,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="MainWindow.open_command_palette")
 
-    # ---------------- 分屏 ----------------
+    # ------------------------------------------------------------------
+    # 分屏
+    # ------------------------------------------------------------------
 
     def _ensure_split(self):
         if self._split is None:
@@ -1102,22 +1333,22 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log_exc(e, module="MainWindow.close_split")
 
-    # ---------------- 更新 / 插件 / 托盘 ----------------
+    # ------------------------------------------------------------------
+    # 更新 / 插件 / 托盘
+    # ------------------------------------------------------------------
 
     def _check_update(self):
         try:
             current = self.settings.get("app_version", "1.0.0")
             has, latest, url = update_mod.check_update(current)
             if has:
-                QMessageBox.information(
-                    self,
-                    self.i18n.t("check_update", "Check for updates"),
-                    f"{self.i18n.t('new_version', 'New version')}: {latest}\n{url}")
+                self.show_toast(
+                    f"{self.i18n.t('new_version', '新版本')}: {latest}",
+                    level="info", duration=5000)
             else:
-                QMessageBox.information(
-                    self,
-                    self.i18n.t("check_update", "Check for updates"),
-                    self.i18n.t("up_to_date", "Up to date"))
+                self.show_toast(
+                    self.i18n.t("up_to_date", "已是最新版"),
+                    level="success")
         except Exception as e:
             log_exc(e, module="MainWindow._check_update")
 
@@ -1170,7 +1401,267 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    # ---------------- 关闭 ----------------
+    # ------------------------------------------------------------------
+    # Toast / 快捷键速查表
+    # ------------------------------------------------------------------
+
+    def show_toast(self, text, level="info", duration=2500):
+        """给面板 / 插件调用的轻量提示入口。"""
+        try:
+            from ui.toast import toast
+            return toast(self, text, level=level, duration=duration)
+        except Exception as e:
+            log_exc(e, module="MainWindow.show_toast")
+            return None
+
+    def _show_shortcuts(self):
+        try:
+            from ui.shortcuts_dialog import ShortcutsDialog
+            dlg = ShortcutsDialog(self.i18n, self)
+            dlg.exec()
+        except Exception as e:
+            log_exc(e, module="MainWindow._show_shortcuts")
+
+    # ------------------------------------------------------------------
+    # 创新输入：手写 / OCR / AI 批量
+    # ------------------------------------------------------------------
+
+    def open_handwriting(self):
+        """打开手写画板；结果插入到打开前的焦点输入框。"""
+        try:
+            from ui.widgets.focus_tracker import FocusTracker
+            from ui.widgets.handwriting import HandwritingDialog
+        except Exception as e:
+            log_exc(e, module="MainWindow.open_handwriting")
+            return
+
+        try:
+            tracker = FocusTracker.instance()
+            target_before = tracker.target()
+        except Exception:
+            target_before = None
+
+        try:
+            dlg = HandwritingDialog(self.i18n, self)
+            if dlg.exec() == QDialog.Accepted and dlg.expression:
+                self._insert_into_target(target_before, dlg.expression)
+        except Exception as e:
+            log_exc(e, module="MainWindow.open_handwriting")
+
+    def open_ocr_input(self):
+        """打开图片识别对话框。"""
+        try:
+            from ui.widgets.focus_tracker import FocusTracker
+            from ui.widgets.ocr_input import OCRInputDialog
+        except Exception as e:
+            log_exc(e, module="MainWindow.open_ocr_input")
+            return
+
+        try:
+            tracker = FocusTracker.instance()
+            target_before = tracker.target()
+        except Exception:
+            target_before = None
+
+        try:
+            dlg = OCRInputDialog(self.i18n, self)
+            if dlg.exec() == QDialog.Accepted and dlg.expression:
+                self._insert_into_target(target_before, dlg.expression)
+        except Exception as e:
+            log_exc(e, module="MainWindow.open_ocr_input")
+
+    def open_ai_batch(self):
+        """切到 AI 面板的批量 Tab。"""
+        try:
+            self._switch_by_key_pub("ai")
+            panel = self._panels.get("ai")
+            if panel is not None and hasattr(panel, "tabs"):
+                try:
+                    panel.tabs.setCurrentIndex(1)
+                except Exception:
+                    pass
+        except Exception as e:
+            log_exc(e, module="MainWindow.open_ai_batch")
+
+    def _insert_into_target(self, widget, text: str):
+        """把 text 插入到 widget（QLineEdit / QPlainTextEdit / QTextEdit）。
+
+        若 widget 已失效则复制到剪贴板并用 toast 提示。
+        """
+        try:
+            if not text:
+                return
+            if widget is not None:
+                try:
+                    widget.objectName()  # 探测是否已被销毁
+                except RuntimeError:
+                    widget = None
+
+            if widget is None:
+                QApplication.clipboard().setText(text)
+                self.show_toast(
+                    self.i18n.t("copied", "已复制") + f": {text[:40]}",
+                    level="info")
+                return
+
+            inserted = False
+            try:
+                if hasattr(widget, "insert") and callable(widget.insert):
+                    widget.insert(text)
+                    inserted = True
+                elif hasattr(widget, "insertPlainText"):
+                    widget.insertPlainText(text)
+                    inserted = True
+            except Exception:
+                inserted = False
+
+            if not inserted:
+                QApplication.clipboard().setText(text)
+                self.show_toast(
+                    self.i18n.t("copied", "已复制") + f": {text[:40]}",
+                    level="info")
+        except Exception as e:
+            log_exc(e, module="MainWindow._insert_into_target")
+
+    # ------------------------------------------------------------------
+    # 专注模式
+    # ------------------------------------------------------------------
+
+    def toggle_focus_mode(self):
+        """F11：隐藏菜单栏 / 侧边栏，仅留当前面板。
+
+        - 用独立 QShortcut 触发（不再依赖菜单 action 的快捷键）
+        - 进入时显示浮动「退出」按钮，作为 F11 失灵的兜底
+        """
+        try:
+            if not self._focus_mode:
+                # ---------- 进入 ----------
+                self._focus_saved = {
+                    "menubar": self.menuBar().isVisible(),
+                    "dock": self.dock.isVisible(),
+                    "tree": self.tree.isVisible(),
+                    "search": self.search_box.isVisible(),
+                    "vis_btn": self.vis_btn.isVisible(),
+                    "toggle": self.toggle.isVisible(),
+                }
+                self.menuBar().setVisible(False)
+                self.dock.setVisible(False)
+                self._focus_mode = True
+                self._show_focus_exit_button()
+                self.show_toast(
+                    self.i18n.t("focus_on", "专注模式：F11 退出"),
+                    level="info", duration=2200)
+            else:
+                # ---------- 退出 ----------
+                saved = self._focus_saved or {}
+                self.menuBar().setVisible(saved.get("menubar", True))
+                self.dock.setVisible(saved.get("dock", True))
+                self.tree.setVisible(saved.get("tree", True))
+                self.search_box.setVisible(saved.get("search", True))
+                self.vis_btn.setVisible(saved.get("vis_btn", True))
+                self.toggle.setVisible(saved.get("toggle", True))
+                self._focus_mode = False
+                self._hide_focus_exit_button()
+                self.show_toast(
+                    self.i18n.t("focus_off", "已退出专注模式"),
+                    level="info", duration=1500)
+        except Exception as e:
+            log_exc(e, module="MainWindow.toggle_focus_mode")
+
+    def _show_focus_exit_button(self):
+        """进入专注时，右上角悬浮一个「退出」按钮（F11 兜底）。"""
+        try:
+            btn = QPushButton("✕ 退出专注 (F11)", self)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setStyleSheet(
+                "QPushButton {"
+                "  background: rgba(50, 50, 55, 220);"
+                "  color: #ffffff;"
+                "  border: 1px solid #888888;"
+                "  border-radius: 4px;"
+                "  padding: 6px 12px;"
+                "}"
+                "QPushButton:hover { background: #c0392b; }"
+            )
+            btn.adjustSize()
+            btn.move(max(10, self.width() - btn.width() - 24), 12)
+            btn.clicked.connect(self.toggle_focus_mode)
+            btn.show()
+            btn.raise_()
+            self._focus_exit_btn = btn
+        except Exception as e:
+            log_exc(e, module="MainWindow._show_focus_exit_button")
+
+    def _hide_focus_exit_button(self):
+        try:
+            if self._focus_exit_btn is not None:
+                self._focus_exit_btn.deleteLater()
+                self._focus_exit_btn = None
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # 会话导入
+    # ------------------------------------------------------------------
+
+    def import_session(self):
+        """打开 .mcsession 文件，把条目加载到历史 + 脚本面板。"""
+        try:
+            from PySide6.QtWidgets import QFileDialog
+        except Exception:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.i18n.t("import_session", "打开会话"),
+            "", "MultiCalc Session (*.mcsession);;JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            entries = data.get("entries") if isinstance(data, dict) else None
+            if not entries:
+                self.show_toast(
+                    self.i18n.t("session_empty", "会话为空"),
+                    level="warn")
+                return
+
+            n = 0
+            for it in entries:
+                try:
+                    self.history.add(
+                        it.get("module") or "session",
+                        it.get("expr") or "",
+                        it.get("result") or "")
+                    n += 1
+                except Exception:
+                    pass
+
+            try:
+                exprs = "\n".join(
+                    (it.get("expr") or "").strip()
+                    for it in entries if (it.get("expr") or "").strip())
+                if exprs:
+                    bus().send_to_script.emit(exprs)
+            except Exception:
+                pass
+
+            try:
+                hp = self._panels.get("history")
+                if hp is not None and hasattr(hp, "refresh"):
+                    hp.refresh()
+            except Exception:
+                pass
+
+            self.show_toast(
+                f"{self.i18n.t('session_loaded', '已加载会话')}: {n} 条",
+                level="success", duration=2200)
+        except Exception as e:
+            log_exc(e, module="MainWindow.import_session")
+            QMessageBox.warning(self, "Error", str(e))
+
+    # ------------------------------------------------------------------
+    # 关闭
+    # ------------------------------------------------------------------
 
     def closeEvent(self, event):
         try:
@@ -1184,6 +1675,12 @@ class MainWindow(QMainWindow):
             pass
 
         try:
+            if self._focus_mode:
+                try:
+                    self.toggle_focus_mode()   # 恢复 UI 状态
+                except Exception:
+                    pass
+
             g = self.geometry()
             self.settings.set(
                 "window_geometry",

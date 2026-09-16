@@ -170,6 +170,18 @@ class SettingsPanel(CalcPanel):
             self.theme.setCurrentIndex(idx)
         self.theme.blockSignals(False)
 
+    def _notify(self, msg, level="success", duration=2000):
+        """给用户看的非模态提示（成功 / 信息）。错误仍用 QMessageBox 保证可见。"""
+        try:
+            from ui.toast import toast
+            toast(self.window(), msg, level=level, duration=duration)
+        except Exception:
+            # 兜底：如果 toast 模块不可用，退回 QMessageBox
+            try:
+                QMessageBox.information(self, "OK", str(msg))
+            except Exception:
+                pass
+
     def _open_theme_editor(self):
         try:
             from ui.theme_editor import ThemeEditor
@@ -223,8 +235,7 @@ class SettingsPanel(CalcPanel):
             })
 
             if not lang_changed:
-                QMessageBox.information(
-                    self, "OK", self.i18n.t("hot_reload", "Applied"))
+                self._notify(self.i18n.t("hot_reload", "Applied"))
         except Exception as e:
             log_exc(e, module="SettingsPanel.apply")
             QMessageBox.warning(self, "Error", str(e))
@@ -247,7 +258,7 @@ class SettingsPanel(CalcPanel):
             return
         try:
             self.settings.export_to(path)
-            QMessageBox.information(self, "OK", path)
+            self._notify(path)
         except Exception as e:
             log_exc(e, module="SettingsPanel._export")
             QMessageBox.warning(self, "Error", str(e))
@@ -260,8 +271,7 @@ class SettingsPanel(CalcPanel):
         try:
             self.settings.import_from(path)
             self._refresh_theme_combo()
-            QMessageBox.information(
-                self, "OK", self.i18n.t("hot_reload", "Applied"))
+            self._notify(self.i18n.t("hot_reload", "Applied"))
         except Exception as e:
             log_exc(e, module="SettingsPanel._import")
             QMessageBox.warning(self, "Error", str(e))

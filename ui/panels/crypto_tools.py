@@ -231,7 +231,7 @@ class CryptoPanel(CalcPanel):
             self._err(e)
 
     # ------------------------------------------------------------------
-    # RSA
+    # RSA（生成搬进 Worker，避免 UI 冻结）
     # ------------------------------------------------------------------
 
     def _build_rsa_tab(self):
@@ -241,14 +241,15 @@ class CryptoPanel(CalcPanel):
         self.rsa_bits.setValue(2048)
         self.rsa_in = QPlainTextEdit("Hello RSA"); self.rsa_in.setFixedHeight(60)
         self.rsa_ct = QPlainTextEdit(""); self.rsa_ct.setFixedHeight(60)
-        b_gen = QPushButton(self.i18n.t("gen_key", "Generate key")); b_gen.clicked.connect(self._rsa_gen)
+        self.rsa_gen_btn = QPushButton(self.i18n.t("gen_key", "Generate key"))
+        self.rsa_gen_btn.clicked.connect(self._rsa_gen)
         b_enc = QPushButton(self.i18n.t("encode", "Encrypt")); b_enc.clicked.connect(self._rsa_enc)
         b_dec = QPushButton(self.i18n.t("decode", "Decrypt")); b_dec.clicked.connect(self._rsa_dec)
 
         w = QWidget(); v = QVBoxLayout(w)
         row = QHBoxLayout()
         row.addWidget(QLabel("Bits")); row.addWidget(self.rsa_bits)
-        row.addWidget(b_gen); row.addStretch(1)
+        row.addWidget(self.rsa_gen_btn); row.addStretch(1)
         v.addLayout(row)
         v.addWidget(QLabel("Public key (PEM)")); v.addWidget(self.rsa_pub)
         v.addWidget(QLabel("Private key (PEM)")); v.addWidget(self.rsa_priv)
@@ -259,11 +260,25 @@ class CryptoPanel(CalcPanel):
         return w
 
     def _rsa_gen(self):
+        """RSA 密钥生成（2048 位可能耗时数百毫秒到数秒）→ Worker。"""
+        self.result.setPlainText(self.i18n.t("running", "Running…"))
         try:
-            r = ct.rsa_generate(self.rsa_bits.value())
+            self.run(
+                ct.rsa_generate, self.rsa_bits.value(),
+                cancel_btn=None,
+                main_btn=self.rsa_gen_btn,
+                on_done=self._on_rsa_gen_done,
+                on_fail=self._err,
+            )
+        except Exception as e:
+            self._err(e)
+
+    def _on_rsa_gen_done(self, r):
+        try:
             self.rsa_priv.setPlainText(r["private_key"])
             self.rsa_pub.setPlainText(r["public_key"])
-            self._show({"bits": r["bits"], "info": "key pair generated"}, tag="rsa-gen")
+            self._show({"bits": r["bits"], "info": "key pair generated"},
+                       tag="rsa-gen")
         except Exception as e:
             self._err(e)
 

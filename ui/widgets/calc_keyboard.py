@@ -4,6 +4,10 @@
 - MainWindow.switch_to_key() 调用 set_module(key)
 - 未匹配的面板回退到"通用"布局
 - 支持 2ⁿᵈ 二级函数、DEG/RAD、内存槽、光标移动、智能插入
+- 智能插入：
+    - 数字后接字母自动补 '*'
+    - '(' 结尾时自动补 ')'，光标停在中间
+    - 单位插入避免重复空格
 """
 from __future__ import annotations
 
@@ -66,8 +70,6 @@ class _TitleBar(QWidget):
     def set_module_label(self, label: str):
         self.title.setText(f"🧮 {label}")
 
-    # ---- 拖动 ----
-
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self._drag_pos = (
@@ -91,8 +93,6 @@ class _TitleBar(QWidget):
 # =====================================================================
 
 class CalcKeyboard(QDialog):
-    """浮动计算器键盘。"""
-
     equals_requested = Signal()
 
     def __init__(self, settings, i18n, parent=None):
@@ -126,8 +126,6 @@ class CalcKeyboard(QDialog):
         self._apply_theme()
 
     # ==================================================================
-    # 构建
-    # ==================================================================
 
     def _build(self):
         self._titlebar = _TitleBar(self)
@@ -140,7 +138,6 @@ class CalcKeyboard(QDialog):
         self._grid.setContentsMargins(6, 4, 6, 4)
         self._grid.setSpacing(4)
 
-        # 内存条
         self._mem_bar = QWidget()
         mem_layout = QHBoxLayout(self._mem_bar)
         mem_layout.setContentsMargins(6, 0, 6, 4)
@@ -156,7 +153,6 @@ class CalcKeyboard(QDialog):
             mem_layout.addWidget(b)
         mem_layout.addStretch(1)
 
-        # 右下角缩放
         self._size_grip = QSizeGrip(self)
         self._size_grip.setFixedSize(16, 16)
         bottom = QHBoxLayout()
@@ -175,7 +171,6 @@ class CalcKeyboard(QDialog):
         self._rebuild_grid()
 
     def _rebuild_grid(self):
-        # 清空旧按钮
         while self._grid.count():
             item = self._grid.takeAt(0)
             w = item.widget()
@@ -196,7 +191,6 @@ class CalcKeyboard(QDialog):
                 self._buttons.append(b)
                 col += span
 
-        # 行列伸缩
         max_cols = max(
             (sum(max(1, int(getattr(k, "span", 1) or 1)) for k in row)
              for row in rows),
@@ -219,11 +213,8 @@ class CalcKeyboard(QDialog):
         self.resize(560, 320)
 
     # ==================================================================
-    # 模块切换
-    # ==================================================================
 
     def set_module(self, module_key: str):
-        """切换浮动键盘布局到指定模块。"""
         try:
             new_layout = get_layout(module_key or "basic")
         except Exception:
@@ -241,8 +232,6 @@ class CalcKeyboard(QDialog):
     def current_module(self) -> str:
         return self._module_key
 
-    # ==================================================================
-    # 按键事件
     # ==================================================================
 
     def _on_key(self, key):
@@ -274,16 +263,32 @@ class CalcKeyboard(QDialog):
             if key.insert:
                 text = self._smart_insert(key.insert)
                 if self._tracker:
-                    self._tracker.insert_text(text)
+                    self._insert_with_cursor(text)
         except Exception as e:
             log_exc(e, module="CalcKeyboard._on_key")
 
-    def _smart_insert(self, text: str) -> str:
+    def _insert_with_cursor(self, text: str):
         """智能插入：
 
-        - 数字后接字母自动补 '*'（`2pi` → `2*pi`）
-        - 以空格开头的文本（如单位）避免重复空格
+        - 若插入文本以 '(' 结尾，自动补 ')'，并把光标回退到括号中间。
+        - 其它情况直接插入。
         """
+        if not text:
+            return
+        try:
+            if text.endswith("("):
+                self._tracker.insert_text(text + ")")
+                w = self._tracker.target()
+                if w is not None and hasattr(w, "cursorPosition") \
+                        and hasattr(w, "setCursorPosition"):
+                    w.setCursorPosition(max(0, w.cursorPosition() - 1))
+                return
+            self._tracker.insert_text(text)
+        except Exception as e:
+            log_exc(e, module="CalcKeyboard._insert_with_cursor")
+
+    def _smart_insert(self, text: str) -> str:
+        """数字后接字母自动补 '*'；开头空格避免重复。"""
         try:
             if not text or not self._tracker:
                 return text
@@ -301,11 +306,9 @@ class CalcKeyboard(QDialog):
                 cur = w.toPlainText()
                 pos = len(cur)
 
-            # 避免重复空格
             if text.startswith(" ") and pos > 0 and cur[pos - 1] == " ":
                 text = text[1:]
 
-            # 数字后接字母补 '*'
             if pos > 0 and cur and cur[pos - 1].isdigit():
                 first = text[0]
                 if first.isalpha() and text not in ("pi", "e"):
@@ -328,14 +331,12 @@ class CalcKeyboard(QDialog):
             elif action == "cursor_right":
                 w.setCursorPosition(min(length, pos + 1))
             elif action == "cursor_up":
-                w.setCursorPosition(0)          # 单行跳到行首
+                w.setCursorPosition(0)
             elif action == "cursor_down":
-                w.setCursorPosition(length)     # 单行跳到行尾
+                w.setCursorPosition(length)
         except Exception as e:
             log_exc(e, module="CalcKeyboard._do_cursor")
 
-    # ==================================================================
-    # 内存槽
     # ==================================================================
 
     def _do_memory(self, action: str):
@@ -370,8 +371,6 @@ class CalcKeyboard(QDialog):
         return 0.0
 
     # ==================================================================
-    # 角度 / 置顶
-    # ==================================================================
 
     def toggle_angle_mode(self):
         self._angle_mode = "DEG" if self._angle_mode == "RAD" else "RAD"
@@ -397,11 +396,8 @@ class CalcKeyboard(QDialog):
         else:
             flags &= ~Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
-        # 修改 flags 后窗口会隐藏，需要重新显示
         self.show()
 
-    # ==================================================================
-    # 主题
     # ==================================================================
 
     def _apply_theme(self):
@@ -469,8 +465,6 @@ class CalcKeyboard(QDialog):
     def refresh_theme(self):
         self._apply_theme()
 
-    # ==================================================================
-    # 关闭
     # ==================================================================
 
     def closeEvent(self, e):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from ._common import friendly_error, InlinePreviewBar
 
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
@@ -58,14 +59,45 @@ class FinancePanel(CalcPanel):
         b = QPushButton(self.i18n.t("calc"))
         b.clicked.connect(self.loan)
 
+        # 实时月供预览条（修复：从任意输入框变化都触发）
+        self._loan_preview = InlinePreviewBar(calc_fn=self._preview_loan)
+        self._loan_preview.attach(self.p, enabled_getter=lambda: True)
+        self.rate.textChanged.connect(
+            lambda _t: self._loan_preview.refresh(self.p.text()))
+        self.years.textChanged.connect(
+            lambda _t: self._loan_preview.refresh(self.p.text()))
+
         w = QWidget()
         form = QFormLayout(w)
         form.addRow(QLabel(self.i18n.t("principal")), self.p)
+        form.addRow(QLabel(""), self._loan_preview)
         form.addRow(QLabel(self.i18n.t("annual_rate")), self.rate)
         form.addRow(QLabel(self.i18n.t("years")), self.years)
         form.addRow(QLabel(self.i18n.t("loan_kind", "类型")), self.loan_kind)
         form.addRow(b)
         return w
+
+    def _preview_loan(self, _text):
+        """贷款月供实时预览（失败时返回 None 清空预览）。"""
+        try:
+            p = float(self.p.text())
+            r_year = float(self.rate.text())
+            n = int(float(self.years.text()) * 12)
+            if p <= 0 or n <= 0 or r_year < 0:
+                return None
+            r = r_year / 100.0 / 12.0
+            kind = self.loan_kind.currentData()
+            if kind == "equal_principal":
+                first = p / n + p * r
+                last = p / n + (p / n) * r
+                return f"首月 ≈ {first:,.2f} / 末月 ≈ {last:,.2f}"
+            if r == 0:
+                m = p / n
+            else:
+                m = p * r * (1 + r) ** n / ((1 + r) ** n - 1)
+            return f"月供 ≈ {m:,.2f}"
+        except Exception:
+            return None
 
     def loan(self):
         try:

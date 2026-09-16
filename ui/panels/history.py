@@ -1,6 +1,9 @@
 """历史记录面板。"""
 from __future__ import annotations
 
+import datetime as _dt
+import json
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox,
@@ -60,6 +63,10 @@ class HistoryPanel(CalcPanel):
         b_csv = QPushButton(i18n.t("export_csv", "Export CSV")); b_csv.clicked.connect(lambda: self._export("csv"))
         b_save_val = QPushButton(i18n.t("fav_value_memo", "Save value")); b_save_val.clicked.connect(self.save_favorite_value)
         b_tags = QPushButton(i18n.t("edit_tags", "Edit tags")); b_tags.clicked.connect(self.edit_tags)
+        b_session = QPushButton(i18n.t("export_session", "导出 .mcsession"))
+        b_session.clicked.connect(self._export_session)
+        b_notebook = QPushButton(i18n.t("export_notebook", "导出 Notebook"))
+        b_notebook.clicked.connect(self._export_notebook)
 
         filters = QHBoxLayout()
         filters.addWidget(self.search, 1)
@@ -76,7 +83,8 @@ class HistoryPanel(CalcPanel):
 
         btns = QHBoxLayout()
         for b in (b_refresh, b_del, b_clear_mod, b_clear,
-                  b_json, b_csv, b_save_val, b_tags):
+                  b_json, b_csv, b_save_val, b_tags,
+                  b_session, b_notebook):
             btns.addWidget(b)
         btns.addStretch(1)
 
@@ -191,8 +199,40 @@ class HistoryPanel(CalcPanel):
             self._page += 1
             self.refresh()
 
+    # ------------------------------------------------------------------
+    # 刷新（保留选中）
+    # ------------------------------------------------------------------
+
+    def _capture_selected_ids(self):
+        try:
+            rows = sorted({i.row() for i in self.list.selectedIndexes()})
+            ids = []
+            for r in rows:
+                if 0 <= r < len(self._rows):
+                    rid = self._rows[r].get("id")
+                    if rid is not None:
+                        ids.append(rid)
+            return ids
+        except Exception:
+            return []
+
+    def _restore_selected_ids(self, ids):
+        try:
+            if not ids:
+                return
+            want = set(ids)
+            for i, r in enumerate(self._rows):
+                if r.get("id") in want:
+                    it = self.list.item(i)
+                    if it is not None:
+                        it.setSelected(True)
+        except Exception:
+            pass
+
     def refresh(self):
         try:
+            keep_ids = self._capture_selected_ids()
+
             kwargs = dict(
                 module=self.module_filter.currentData(),
                 search=self.search.text().strip() or None,
@@ -202,7 +242,8 @@ class HistoryPanel(CalcPanel):
             )
             self._total = self.history.count(**kwargs)
             rows = self.history.list(
-                **kwargs, offset=self._page * self.PAGE_SIZE, limit=self.PAGE_SIZE)
+                **kwargs, offset=self._page * self.PAGE_SIZE,
+                limit=self.PAGE_SIZE)
             self._rows = rows
             self.list.clear()
             for r in rows:
@@ -214,6 +255,9 @@ class HistoryPanel(CalcPanel):
                 self.list.addItem(
                     f"{star} {r['time']} [{r['module']}] "
                     f"{r['expr']} = {r['result']}{suffix}{tag_str}")
+
+            self._restore_selected_ids(keep_ids)
+
             max_page = max(0, (self._total - 1) // self.PAGE_SIZE)
             self.page_label.setText(
                 f"{self._page + 1} / {max_page + 1}  ({self._total})")
@@ -251,7 +295,8 @@ class HistoryPanel(CalcPanel):
         self.refresh()
 
     def remove_selected(self):
-        rows = sorted({i.row() for i in self.list.selectedIndexes()}, reverse=True)
+        rows = sorted({i.row() for i in self.list.selectedIndexes()},
+                      reverse=True)
         if not rows:
             it = self._selected_item()
             if it is not None:
@@ -273,6 +318,10 @@ class HistoryPanel(CalcPanel):
         self._reload_filters()
         self.refresh()
 
+    # ------------------------------------------------------------------
+    # 导出（JSON / CSV / .mcsession / Notebook）
+    # ------------------------------------------------------------------
+
     def _export(self, kind):
         path, _ = QFileDialog.getSaveFileName(
             self, "Export", f"history.{kind}", "JSON (*.json);;CSV (*.csv)")
@@ -286,4 +335,86 @@ class HistoryPanel(CalcPanel):
             QMessageBox.information(self, "OK", path)
         except Exception as e:
             log_exc(e, module="HistoryPanel._export")
+            QMessageBox.warning(self, "Error", str(e))
+
+    def _collect_for_export(self):
+        """收集用于导出的条目：优先当前选中，否则当前页全部。"""
+        rows = sorted({i.row() for i in self.list.selectedIndexes()})
+        if rows:
+            return [self._rows[r] for r in rows
+                    if 0 <= r < len(self._rows)]
+        return list(self._rows)
+
+    def _export_session(self):
+        items = self._collect_for_export()
+        if not items:
+            QMessageBox.information(
+                self, "OK",
+                self.i18n.t("nothing_to_export", "无可导出条目"))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export session", "session.mcsession",
+            "MultiCalc Session (*.mcsession);;JSON (*.json)")
+        if not path:
+            return
+        try:
+            payload = {
+                "version": 1,
+                "app": "MultiCalc",
+                "created": _dt.datetime.now().isoformat(),
+                "count": len(items),
+                "entries": [
+                    {
+                        "module": it.get("module", ""),
+                        "expr": it.get("expr", ""),
+                        "result": it.get("result", ""),
+                        "time": it.get("time", ""),
+                        "tags": list(it.get("tags") or []),
+                    }
+                    for it in items
+                ],
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            try:
+                from ui.toast import toast
+                toast(self.window(), path, level="success")
+            except Exception:
+                QMessageBox.information(self, "OK", path)
+        except Exception as e:
+            log_exc(e, module="HistoryPanel._export_session")
+            QMessageBox.warning(self, "Error", str(e))
+
+    def _export_notebook(self):
+        items = self._collect_for_export()
+        if not items:
+            QMessageBox.information(
+                self, "OK",
+                self.i18n.t("nothing_to_export", "无可导出条目"))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Notebook", "multicalc.ipynb",
+            "Jupyter Notebook (*.ipynb)")
+        if not path:
+            return
+        try:
+            from core import notebook_export as nb_mod
+            norm = []
+            for it in items:
+                norm.append({
+                    "module": it.get("module", ""),
+                    "expr": it.get("expr", ""),
+                    "result": it.get("result", ""),
+                    "time": it.get("time", ""),
+                    "latex": "",
+                })
+            nb_mod.export_to_ipynb(norm, path,
+                                   title="MultiCalc Session")
+            try:
+                from ui.toast import toast
+                toast(self.window(), path, level="success")
+            except Exception:
+                QMessageBox.information(self, "OK", path)
+        except Exception as e:
+            log_exc(e, module="HistoryPanel._export_notebook")
             QMessageBox.warning(self, "Error", str(e))

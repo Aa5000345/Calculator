@@ -1,5 +1,5 @@
 """面板共享工具：错误展示、异步执行、布局清理、统一 ResultView、
-InlinePreviewBar（实时预览）。"""
+InlinePreviewBar（实时预览）、内联校验辅助。"""
 from __future__ import annotations
 
 import csv as _csv
@@ -12,7 +12,7 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import (
     QWidget, QPlainTextEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QTabWidget, QScrollArea, QMessageBox, QApplication, QLabel, QMenu,
-    QToolButton, QFrame,
+    QToolButton, QFrame, QGraphicsOpacityEffect,
 )
 
 from core.errors import CalcError
@@ -59,11 +59,19 @@ def run_async(parent_widget, fn, *args,
 
     if cancel_btn is not None:
         cancel_btn.setEnabled(True)
-        try:
-            cancel_btn.clicked.disconnect()
-        except Exception:
-            pass
-        cancel_btn.clicked.connect(w.cancel)
+        # 记录当前 worker，供"取消"按钮回调使用
+        cancel_btn._current_worker = w
+        # 只连接一次，避免每次 disconnect 产生的 C++ 层警告
+        if not getattr(cancel_btn, "_cancel_connected", False):
+            def _on_cancel_clicked(_btn=cancel_btn):
+                wk = getattr(_btn, "_current_worker", None)
+                if wk is not None:
+                    try:
+                        wk.cancel()
+                    except Exception:
+                        pass
+            cancel_btn.clicked.connect(_on_cancel_clicked)
+            cancel_btn._cancel_connected = True
 
     def _restore():
         if cancel_btn is not None:
@@ -95,6 +103,40 @@ def run_async(parent_widget, fn, *args,
 
 
 # =====================================================================
+# 内联校验辅助（红框 + tooltip）
+# =====================================================================
+
+_ERROR_QSS = (
+    "border: 1px solid #ff5555;"
+    "border-radius: 4px;"
+)
+
+
+def mark_field_error(widget, msg: str = ""):
+    """给输入控件加红框 + tooltip。多次调用安全，会保留原样式表。"""
+    try:
+        if not hasattr(widget, "_prev_qss_saved"):
+            widget._prev_qss_saved = widget.styleSheet()
+        widget.setStyleSheet(_ERROR_QSS)
+        widget.setToolTip(msg or "")
+    except Exception:
+        pass
+
+
+def clear_field_error(widget):
+    """清除红框，恢复原样式表。"""
+    try:
+        if getattr(widget, "_prev_qss_saved", None) is not None:
+            widget.setStyleSheet(widget._prev_qss_saved)
+            widget._prev_qss_saved = None
+        else:
+            widget.setStyleSheet("")
+        widget.setToolTip("")
+    except Exception:
+        pass
+
+
+# =====================================================================
 # 实时预览条
 # =====================================================================
 
@@ -110,6 +152,7 @@ class InlinePreviewBar(QLabel):
     - 300ms 防抖
     - 表达式 > 40 字符或含昂贵关键字时跳过
     - 求值异常静默失败（清空预览）
+    - 支持动态替换 calc_fn（set_calc_fn）
     """
 
     def __init__(self, calc_fn=None, parent=None):
@@ -127,9 +170,24 @@ class InlinePreviewBar(QLabel):
         self._timer.setInterval(300)
         self._timer.timeout.connect(self._do_preview)
 
+    def set_calc_fn(self, fn):
+        self._calc_fn = fn
+
     def attach(self, line_edit, enabled_getter=None):
         self._enabled_getter = enabled_getter
         line_edit.textChanged.connect(self._on_text)
+
+
+    def refresh(self, text=None):
+        """外部触发预览刷新。
+
+        用于「多输入框联动」场景：当利率 / 年限 / 分布参数变化时，
+        由外部调用本方法重新触发预览计算。
+        text 为 None 时复用当前缓存值。
+        """
+        if text is None:
+            text = self._pending
+        self._on_text(text)
 
     def _on_text(self, text):
         self._pending = text or ""
@@ -227,15 +285,7 @@ class CollapsibleGroup(QFrame):
 # =====================================================================
 
 class ResultView(QWidget):
-    """统一结果查看器。
-
-    - 多格式复制（文本 / LaTeX / JSON / CSV）
-    - 跨面板发送子菜单
-    - 结果高亮动画
-    - 步骤折叠
-    - 错误卡片（复制详情 / 查看日志 / 重试）
-    - 耗时显示
-    """
+    """统一结果查看器。"""
 
     elapsed_changed = Signal(float)
 
@@ -247,6 +297,7 @@ class ResultView(QWidget):
         self._last_latex = ""
         self._last_retry = None
         self._anim = None
+        self._flash_overlay = None
 
         # ---- 主文本 + LaTeX ----
         self.text = QPlainTextEdit()
@@ -310,8 +361,6 @@ class ResultView(QWidget):
             w.customContextMenuRequested.connect(self._show_context_menu)
 
     # ------------------------------------------------------------------
-    # 展示
-    # ------------------------------------------------------------------
 
     def show_result(self, text, latex="", steps=None, elapsed=None,
                     highlight=True):
@@ -354,8 +403,6 @@ class ResultView(QWidget):
         self.latex.set_color(color)
 
     # ------------------------------------------------------------------
-    # 内部
-    # ------------------------------------------------------------------
 
     def _fill_steps(self, steps):
         _clear_layout(self.steps_layout)
@@ -375,18 +422,56 @@ class ResultView(QWidget):
             self.elapsed_label.setText("")
 
     def _flash(self):
+        """用临时叠加层做高亮动画 —— 不改动 styleSheet，避免覆盖主题。"""
         try:
             from PySide6.QtGui import QColor
+
+            old = self._flash_overlay
+            if old is not None:
+                try:
+                    old.deleteLater()
+                except Exception:
+                    pass
+
+            vp = self.text.viewport()
+            if vp is None:
+                return
+
+            overlay = QFrame(vp)
+            overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            overlay.setFrameShape(QFrame.NoFrame)
             bg = self.text.palette().base().color()
-            hi = QColor(bg).lighter(130)
-            anim = QPropertyAnimation(self.text, b"styleSheet", self)
-            anim.setDuration(400)
-            anim.setStartValue(
-                f"QPlainTextEdit{{background-color:{hi.name()};}}")
-            anim.setEndValue("")
+            hi = QColor(bg).lighter(130).name()
+            overlay.setStyleSheet(f"background-color: {hi};")
+            overlay.setGeometry(vp.rect())
+            overlay.show()
+            overlay.raise_()
+
+            effect = QGraphicsOpacityEffect(overlay)
+            effect.setOpacity(1.0)
+            overlay.setGraphicsEffect(effect)
+
+            anim = QPropertyAnimation(effect, b"opacity", self)
+            anim.setDuration(450)
+            anim.setStartValue(1.0)
+            anim.setEndValue(0.0)
             anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+            def _cleanup():
+                try:
+                    overlay.deleteLater()
+                except Exception:
+                    pass
+                if self._flash_overlay is overlay:
+                    self._flash_overlay = None
+
+            anim.finished.connect(_cleanup)
             anim.start(QPropertyAnimation.DeleteWhenStopped)
             self._anim = anim
+            self._flash_overlay = overlay
+
+            # 保险：动画未触发 finished 也强制清理
+            QTimer.singleShot(900, _cleanup)
         except Exception:
             pass
 
@@ -400,7 +485,10 @@ class ResultView(QWidget):
         a_text = menu.addAction(i18n.t("copy_as_text", "复制为文本"))
         a_latex = menu.addAction(i18n.t("copy_as_latex", "复制为 LaTeX"))
         a_json = menu.addAction(i18n.t("copy_as_json", "复制为 JSON"))
+        a_json = menu.addAction(i18n.t("copy_as_json", "复制为 JSON"))
         a_csv = menu.addAction(i18n.t("copy_as_csv", "复制为 CSV"))
+        a_md = menu.addAction(i18n.t("copy_as_markdown", "复制为 Markdown"))
+        a_card = menu.addAction(i18n.t("share_card", "分享卡片 (PNG)…"))
         menu.addSeparator()
 
         send_menu = menu.addMenu(i18n.t("send_to", "发送到…"))
@@ -433,6 +521,10 @@ class ResultView(QWidget):
                 w.writerow(["text", "latex"])
                 w.writerow([self._last_text, self._last_latex])
                 QApplication.clipboard().setText(buf.getvalue())
+            elif chosen is a_md:
+                self._copy_as_markdown()
+            elif chosen is a_card:
+                self._save_share_card()
             elif chosen is a_send_unit:
                 from ui.signals import bus
                 bus().send_to_unit.emit(self._last_text)
@@ -452,6 +544,80 @@ class ResultView(QWidget):
                 bus().send_to_plot.emit(self._last_text)
         except Exception as e:
             log_exc(e, module="ResultView._show_context_menu")
+
+
+    def _copy_as_markdown(self):
+        try:
+            text = self._last_text or ""
+            latex = self._last_latex or ""
+            parts = []
+            if text:
+                parts.append(f"```\n{text}\n```")
+            if latex:
+                parts.append(f"$$\n{latex}\n$$")
+            md = "\n\n".join(parts) if parts else text
+            QApplication.clipboard().setText(md)
+            QMessageBox.information(
+                self, "OK", self.i18n.t("copied", "已复制"))
+        except Exception as e:
+            log_exc(e, module="ResultView._copy_as_markdown")
+
+    def _save_share_card(self):
+        """弹出保存对话框，生成分享卡片 PNG（含二维码）。"""
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            from core import share_card as sc_mod
+        except Exception as e:
+            log_exc(e, module="ResultView._save_share_card.import")
+            return
+
+        # 默认文件名
+        ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"multicalc_{ts}.png"
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.i18n.t("share_card", "分享卡片"),
+            default_name, "PNG (*.png)")
+        if not path:
+            return
+
+        # 二维码内容：优先 LaTeX，其次原始结果
+        qr_data = (self._last_latex or self._last_text or "").strip()
+        if len(qr_data) > 180:      # 太长二维码会很密
+            qr_data = qr_data[:180]
+
+        # 表达式：用结果第一行的前缀做一个猜测；取不到就留空
+        expr = ""
+        try:
+            lines = (self._last_text or "").splitlines()
+            if lines:
+                expr = lines[0][:80]
+        except Exception:
+            expr = ""
+
+        try:
+            theme = "dark"
+            try:
+                if self.i18n.lang.startswith("en"):
+                    theme = "dark"
+            except Exception:
+                pass
+            sc_mod.render_share_card(
+                expr=expr,
+                result=self._last_text or "",
+                latex=self._last_latex or "",
+                title="MultiCalc",
+                out_path=path,
+                qr_data=qr_data or None,
+                theme=theme,
+            )
+            try:
+                from ui.toast import toast
+                toast(self.window(), path, level="success")
+            except Exception:
+                QMessageBox.information(self, "OK", path)
+        except Exception as e:
+            log_exc(e, module="ResultView._save_share_card")
+            QMessageBox.warning(self, "Error", str(e))
 
     def _copy_error(self):
         try:
@@ -475,12 +641,3 @@ class ResultView(QWidget):
             self._last_retry()
         except Exception as e:
             log_exc(e, module="ResultView._retry")
-
-    # 兼容旧接口
-    def _copy_value(self):
-        try:
-            QApplication.clipboard().setText(self._last_text)
-            QMessageBox.information(
-                self, "OK", self.i18n.t("copied", "已复制"))
-        except Exception as e:
-            log_exc(e, module="ResultView._copy_value")

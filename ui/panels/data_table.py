@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -22,15 +22,22 @@ class DataTablePanel(CalcPanel):
 
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
-        self._formulas = {}  # col_idx -> 公式文本
+        self._formulas = {}
+        self._suppress_item_changed = False
 
-        # ---------------- 表格 ----------------
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["A", "B", "C", "D"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.horizontalHeader().customContextMenuRequested.connect(
             self._header_context_menu)
+
+        # 公式自动重算（防抖 350ms）
+        self._recalc_timer = QTimer(self)
+        self._recalc_timer.setSingleShot(True)
+        self._recalc_timer.setInterval(350)
+        self._recalc_timer.timeout.connect(self._auto_recalc)
+        self.table.itemChanged.connect(self._on_cell_changed)
 
         for _ in range(5):
             self._append_row()
@@ -73,7 +80,6 @@ class DataTablePanel(CalcPanel):
         self.formula_input.editingFinished.connect(self._save_formula)
         form_row.addWidget(self.formula_input, 1)
 
-        # ---------------- 结果 ----------------
         self.result = ResultView(i18n)
 
         main = QVBoxLayout(self)
@@ -83,6 +89,24 @@ class DataTablePanel(CalcPanel):
         main.addWidget(self.result, 1)
 
         self._refresh_formula_combo()
+
+    # ------------------------------------------------------------------
+    # 单元格变更 → 防抖重算
+    # ------------------------------------------------------------------
+
+    def _on_cell_changed(self, _item):
+        if self._suppress_item_changed:
+            return
+        if not self._formulas:
+            return
+        self._recalc_timer.start()
+
+    def _auto_recalc(self):
+        """防抖触发：静默重算，仅在出错时把结果写到 result。"""
+        try:
+            self._recalc_all(silent=True)
+        except Exception as e:
+            log_exc(e, module="DataTablePanel._auto_recalc")
 
     # ------------------------------------------------------------------
     # 列管理
@@ -153,14 +177,16 @@ class DataTablePanel(CalcPanel):
         self._refresh_formula_combo()
 
     # ------------------------------------------------------------------
-    # 行管理
-    # ------------------------------------------------------------------
 
     def _append_row(self):
-        r = self.table.rowCount()
-        self.table.insertRow(r)
-        for c in range(self.table.columnCount()):
-            self.table.setItem(r, c, QTableWidgetItem(""))
+        self._suppress_item_changed = True
+        try:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            for c in range(self.table.columnCount()):
+                self.table.setItem(r, c, QTableWidgetItem(""))
+        finally:
+            self._suppress_item_changed = False
 
     def _delete_rows(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()},
@@ -170,8 +196,6 @@ class DataTablePanel(CalcPanel):
         for r in rows:
             self.table.removeRow(r)
 
-    # ------------------------------------------------------------------
-    # 公式求值
     # ------------------------------------------------------------------
 
     def _to_data_table(self):
@@ -189,21 +213,28 @@ class DataTablePanel(CalcPanel):
                 dt.set_formula(cols[c], f)
         return dt
 
-    def _recalc_all(self):
+    def _recalc_all(self, silent=False):
+        self._suppress_item_changed = True
         try:
             dt = self._to_data_table()
             dt.recalc_all()
             for r in range(self.table.rowCount()):
                 for c in range(self.table.columnCount()):
                     v = dt.get_cell(r, c)
-                    self.table.setItem(r, c, QTableWidgetItem(v))
-            self.result.show_result(
-                f"✓ {self.i18n.t('recalc_done', '重算完成')}", "")
+                    it = self.table.item(r, c)
+                    if it is None:
+                        self.table.setItem(r, c, QTableWidgetItem(v))
+                    elif it.text() != v:
+                        it.setText(v)
+            if not silent:
+                self.result.show_result(
+                    f"✓ {self.i18n.t('recalc_done', '重算完成')}", "")
         except Exception as e:
-            self.result.show_error(e)
+            if not silent:
+                self.result.show_error(e)
+        finally:
+            self._suppress_item_changed = False
 
-    # ------------------------------------------------------------------
-    # 表头右键菜单
     # ------------------------------------------------------------------
 
     def _header_context_menu(self, pos):
@@ -234,8 +265,6 @@ class DataTablePanel(CalcPanel):
             self._recalc_all()
 
     # ------------------------------------------------------------------
-    # 导入 / 导出
-    # ------------------------------------------------------------------
 
     def _import_csv(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -256,15 +285,19 @@ class DataTablePanel(CalcPanel):
 
     def _load_from_data_table(self, dt: dt_mod.DataTable):
         self._formulas = {}
-        self.table.setColumnCount(len(dt.columns))
-        self.table.setHorizontalHeaderLabels(dt.columns)
-        self.table.setRowCount(0)
-        for row in dt.rows:
-            self._append_row()
-            r = self.table.rowCount() - 1
-            for c, v in enumerate(row):
-                if c < self.table.columnCount():
+        self._suppress_item_changed = True
+        try:
+            self.table.setColumnCount(len(dt.columns))
+            self.table.setHorizontalHeaderLabels(dt.columns)
+            self.table.setRowCount(0)
+            for row in dt.rows:
+                r = self.table.rowCount()
+                self.table.insertRow(r)
+                for c in range(self.table.columnCount()):
+                    v = row[c] if c < len(row) else ""
                     self.table.setItem(r, c, QTableWidgetItem(str(v)))
+        finally:
+            self._suppress_item_changed = False
         self._refresh_formula_combo()
 
     def _export_csv(self):

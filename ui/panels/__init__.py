@@ -22,13 +22,34 @@ from .tools import ToolsPanel
 from .snippets import SnippetsPanel
 from .timer_panel import TimerPanel
 from .clipboard_history import ClipboardHistoryPanel
+from .ai import AIPanel
+from .script import ScriptPanel
+
 
 __all__ = [
-    "BasicPanel", "ScientificPanel", "UnitPanel", "CurrencyPanel",
-    "BasePanel", "MatrixPanel", "StatsPanel", "PlotPanel", "Plot3DPanel",
-    "FinancePanel", "DatePanel", "RandomPanel", "ProbabilityPanel",
-    "BitsPanel", "CryptoPanel", "LatexEditorPanel", "HistoryPanel",
+    "BasicPanel",
+    "ScientificPanel",
+    "UnitPanel",
+    "CurrencyPanel",
+    "BasePanel",
+    "MatrixPanel",
+    "StatsPanel",
+    "PlotPanel",
+    "Plot3DPanel",
+    "FinancePanel",
+    "DatePanel",
+    "RandomPanel",
+    "ProbabilityPanel",
+    "BitsPanel",
+    "CryptoPanel",
+    "LatexEditorPanel",
+    "HistoryPanel",
     "SettingsPanel",
-    "DataTablePanel", "ToolsPanel", "SnippetsPanel", "TimerPanel",
+    "DataTablePanel",
+    "ToolsPanel",
+    "SnippetsPanel",
+    "TimerPanel",
     "ClipboardHistoryPanel",
+    "AIPanel",
+    "ScriptPanel",
 ]

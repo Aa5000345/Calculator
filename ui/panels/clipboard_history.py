@@ -1,12 +1,20 @@
-"""剪贴板历史：监听系统剪贴板、可搜索、可固定。"""
+"""剪贴板历史：监听系统剪贴板、可搜索、可固定、可智能识别表达式。
+
+智能识别（可选）：
+- 通过 core.clipboard_monitor 轮询剪贴板
+- 识别到像表达式的内容时，发出 expr_detected 信号
+- 面板把该信号转发到全局总线 clipboard_expr
+- MainWindow 收到后弹 toast（点击 → 送往基础面板）
+"""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QApplication, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QVBoxLayout, QHBoxLayout, QAbstractItemView,
+    QPushButton, QVBoxLayout, QHBoxLayout, QAbstractItemView, QCheckBox,
 )
 
+from core import clipboard_monitor
 from .base import CalcPanel
 
 
@@ -14,6 +22,9 @@ class ClipboardHistoryPanel(CalcPanel):
     module_key = "clipboard_history"
 
     MAX = 200
+
+    # 识别到表达式时发出（供上层使用，也会转发到 bus().clipboard_expr）
+    expr_detected = Signal(str)
 
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
@@ -34,20 +45,100 @@ class ClipboardHistoryPanel(CalcPanel):
         b_pin.clicked.connect(self._toggle_pin)
         b_clear.clicked.connect(self._clear)
 
+        # 智能识别开关
+        self.smart_detect = QCheckBox(
+            i18n.t("clipboard_smart_detect", "智能识别表达式"))
+        self.smart_detect.setChecked(
+            bool(settings.get("clipboard_smart_detect", False)))
+        self.smart_detect.stateChanged.connect(self._on_smart_toggle)
+
+        self.smart_toast = QCheckBox(
+            i18n.t("clipboard_smart_toast", "识别后弹提示"))
+        self.smart_toast.setChecked(
+            bool(settings.get("clipboard_smart_toast", True)))
+        self.smart_toast.stateChanged.connect(
+            lambda _: settings.set("clipboard_smart_toast",
+                                   self.smart_toast.isChecked()))
+
         row = QHBoxLayout()
         for b in (b_copy, b_pin, b_clear):
             row.addWidget(b)
         row.addStretch(1)
 
+        smart_row = QHBoxLayout()
+        smart_row.addWidget(self.smart_detect)
+        smart_row.addWidget(self.smart_toast)
+        smart_row.addStretch(1)
+
         main = QVBoxLayout(self)
         main.addWidget(self.search)
+        main.addLayout(smart_row)
         main.addWidget(self.list, 1)
         main.addLayout(row)
+
+        # 内部信号 → bus 转发
+        self.expr_detected.connect(self._forward_to_bus)
+
+        # 智能识别监听器
+        self._monitor = clipboard_monitor.ClipboardMonitor(self)
 
         cb = QApplication.clipboard()
         cb.dataChanged.connect(self._on_clipboard)
         self._last_text = ""
         self._refresh()
+
+        # 根据开关状态决定是否立即启动识别
+        if self.smart_detect.isChecked():
+            QTimer.singleShot(0, self._start_monitor)
+
+    # ------------------------------------------------------------------
+
+    def _forward_to_bus(self, text):
+        try:
+            from ui.signals import bus
+            bus().clipboard_expr.emit(str(text))
+        except Exception:
+            pass
+
+    def _on_smart_toggle(self, state):
+        try:
+            self.settings.set("clipboard_smart_detect", bool(state))
+        except Exception:
+            pass
+        if state:
+            self._start_monitor()
+        else:
+            self._stop_monitor()
+
+    def _start_monitor(self):
+        try:
+            self._monitor.start(self._on_expr_detected)
+        except Exception:
+            pass
+
+    def _stop_monitor(self):
+        try:
+            self._monitor.stop()
+        except Exception:
+            pass
+
+    def _on_expr_detected(self, text):
+        """剪贴板监听器识别到表达式 → 发内部信号。"""
+        if not self.smart_detect.isChecked():
+            return
+        try:
+            self.expr_detected.emit(text)
+        except Exception:
+            pass
+
+    def closeEvent(self, e):
+        try:
+            self._stop_monitor()
+        except Exception:
+            pass
+        super().closeEvent(e)
+
+    # ------------------------------------------------------------------
 
     def _on_clipboard(self):
         try:
@@ -58,7 +149,6 @@ class ClipboardHistoryPanel(CalcPanel):
             return
         self._last_text = t
         self._items.insert(0, {"text": t, "pinned": False})
-        # 保留最多 MAX 条，固定项不丢
         if len(self._items) > self.MAX:
             keep = [x for x in self._items if x["pinned"]]
             others = [x for x in self._items if not x["pinned"]]
