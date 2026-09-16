@@ -23,7 +23,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller pyinstaller-hooks-contrib
+          pip install pyinstaller pyinstaller-hooks-contrib pytest
+
+      - name: Check i18n consistency
+        run: python scripts/check_i18n.py
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+      - name: Generate default icon if missing
+        run: |
+          if (-not (Test-Path "assets/icon.ico")) {
+            Write-Host "assets/icon.ico not found; generating..."
+            python scripts/make_icon.py
+          } else {
+            Write-Host "assets/icon.ico exists; skipping generation"
+          }
 
       - name: Build with PyInstaller
         run: pyinstaller MultiCalc.spec --clean --noconfirm
