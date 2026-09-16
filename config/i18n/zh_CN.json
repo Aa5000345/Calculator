@@ -380,7 +380,6 @@
   "app_title": "多功能计算器",
   "basic": "基础计算",
   "scientific": "科学计算",
-  "unit": "单位换算",
   "currency": "汇率换算",
   "base": "进制转换",
   "stats": "统计计算",
@@ -566,6 +565,5 @@
   "script_line": "行",
   "script_expr": "表达式",
   "script_export_csv": "导出结果 CSV",
-  "script_done": "完成：成功 {ok}，失败 {err}",
-  "calc_keyboard": "计算器键盘"
+  "script_done": "完成：成功 {ok}，失败 {err}"
 }
