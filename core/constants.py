@@ -43,8 +43,9 @@ PHYSICS_CONSTANTS = {
 def all_constants():
     """合并两套常数，返回 {key: (sym, val, unit, desc)}。"""
     out = {}
-    for k, (sym, val, desc) in MATH_CONSTANTS.items():
-        out[k] = (sym, val, "", desc)
+    # MATH_CONSTANTS 也是 4 元组：统一用 4 个变量解包
+    for k, (sym, val, unit, desc) in MATH_CONSTANTS.items():
+        out[k] = (sym, val, unit, desc)
     for k, (sym, val, unit, desc) in PHYSICS_CONSTANTS.items():
         out[k] = (sym, val, unit, desc)
     return out

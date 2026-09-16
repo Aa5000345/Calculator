@@ -1,4 +1,6 @@
 {
+  "clipboard_smart_detect": false,
+  "clipboard_smart_toast": true,
   "language": "zh_CN",
   "theme": "dark",
   "palette": {

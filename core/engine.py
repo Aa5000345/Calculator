@@ -85,11 +85,47 @@ _TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 
 
 def _norm(expr) -> str:
+    """表达式预处理：Unicode 规范化 + 常见输入修正。
+
+    - 常见运算符替换（π / × / ÷ / − / ^ / ≤ / ≥）
+    - 上标数字：² → **2、³ → **3、⁻¹ → **(-1) …
+    - 前导零：09 → 9（避免 Python 3 的 0o 前缀解析报错）
+    - 感叹号阶乘
+    """
     s = str(expr).strip()
+
+    # 1) 运算符归一化
     s = (s.replace("π", "pi").replace("×", "*").replace("÷", "/")
-          .replace("−", "-").replace("^", "**")
-          .replace("≤", "<=").replace("≥", ">="))
+          .replace("−", "-").replace("≤", "<=").replace("≥", ">="))
+
+    # 2) Unicode 上标数字 → **N
+    _SUPERSCRIPTS = {
+        "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+        "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+        "⁻": "-", "⁺": "+",
+    }
+    def _repl_sup(m):
+        chars = m.group(0)
+        digits = "".join(_SUPERSCRIPTS.get(c, c) for c in chars)
+        return f"**({digits})" if len(digits) > 1 else f"**{digits}"
+    s = re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+", _repl_sup, s)
+
+    # 3) 前导零：0 开头的多位数字 → 去掉前导零
+    #    匹配 "0" 后面跟数字，或前后都是非数字边界
+    def _strip_leading_zeros(m):
+        tok = m.group(0)
+        # "0" / "0.5" / "0" 保留；"09" / "007" 去零
+        if tok.startswith("0") and len(tok) > 1 and tok[1].isdigit():
+            return tok.lstrip("0") or "0"
+        return tok
+    s = re.sub(r"\b\d+\b", _strip_leading_zeros, s)
+
+    # 4) 幂符号：^ → **
+    s = s.replace("^", "**")
+
+    # 5) 阶乘
     s = re.sub(r"(\d+)\s*!", r"factorial(\1)", s)
+
     return s
 
 
