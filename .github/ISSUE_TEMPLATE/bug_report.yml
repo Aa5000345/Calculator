@@ -1,0 +1,187 @@
+name: 🐛 Bug 报告
+description: 报告一个可复现的 Bug
+title: "[Bug] "
+labels: ["bug", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你花时间报告 Bug！请尽量填写以下信息，以便我们快速定位问题。
+
+        > ⚠️ **请不要在这里报告安全漏洞**。
+        > 请通过 [私有漏洞报告](https://github.com/Aa5000345/Calculator/security/advisories/new)
+        > 提交，详见 [SECURITY.md](../../SECURITY.md)。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      description: 请确认以下事项，避免重复劳动
+      options:
+        - label: 我已经搜索过 [现有 Issues](https://github.com/Aa5000345/Calculator/issues)，确认这不是重复问题
+          required: true
+        - label: 我使用的是[最新版本](https://github.com/Aa5000345/Calculator/releases/latest)
+          required: true
+        - label: 这不是安全问题（安全问题请走私有渠道）
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug 描述
+      description: 用一两句话清晰描述这个 Bug
+      placeholder: 例如：在基础面板输入 `1/0` 后点击计算，程序崩溃
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 一步一步描述如何触发这个 Bug，越详细越好
+      placeholder: |
+        1. 打开「基础计算」面板
+        2. 在输入框输入 `1/0`
+        3. 点击「计算」按钮
+        4. 观察到程序无响应并闪退
+      value: |
+        1. 
+        2. 
+        3. 
+        4. 
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你期望发生什么？
+      placeholder: 例如：显示友好的错误提示「除零错误」，不崩溃
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么？如果有错误信息或日志，请粘贴
+      placeholder: |
+        程序闪退。日志显示：
+        ```
+        Traceback (most recent call last):
+          File "...", line ..., in ...
+        ...
+        ```
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: MultiCalc 版本
+      description: |
+        可在「设置」面板查看，或运行 `python main.py --version`
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows 8 / 8.1
+        - macOS 14 (Sonoma)
+        - macOS 13 (Ventura)
+        - macOS 12 (Monterey)
+        - Ubuntu / Debian
+        - Fedora / RHEL
+        - Arch / Manjaro
+        - 其他 Linux 发行版
+        - 其他（请在补充信息中说明）
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python 版本
+      description: 运行 `python --version` 获取
+      placeholder: "3.11.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: 安装方式
+      description: 你是如何获取 MultiCalc 的？
+      options:
+        - GitHub Release 的 exe
+        - pip 安装
+        - 源码运行（git clone）
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: 相关模块
+      description: Bug 出现在哪个面板 / 功能？
+      options:
+        - 基础计算
+        - 科学计算
+        - 单位换算
+        - 汇率换算
+        - 进制转换
+        - 矩阵
+        - 统计
+        - 概率
+        - 随机数
+        - 数据表
+        - 绘图
+        - 3D 绘图
+        - 财务
+        - 日期
+        - 位运算
+        - 加密工具
+        - LaTeX 编辑器
+        - 工具
+        - 片段
+        - 计时器
+        - 剪贴板
+        - 脚本
+        - AI 助手
+        - 历史记录
+        - 设置
+        - 浮动键盘
+        - 命令面板
+        - 手写 / OCR
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: |
+        截图、录屏、日志、相关配置等。
+
+        日志位置：
+        - Windows: `%USERPROFILE%\.multicalc\logs\app.log`
+        - macOS / Linux: `~/.multicalc/logs/app.log`
+      placeholder: |
+        日志文件内容：
+        ```
+        ...
+        ```
+      render: markdown
+    validations:
+      required: false
