@@ -23,6 +23,7 @@ class UnitPanel(CalcPanel):
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
 
+        # ---------------- 类别 ----------------
         self.category = QComboBox()
         for key in unit_mod.categories():
             label = unit_mod.get_category(key)["label"]
@@ -31,9 +32,12 @@ class UnitPanel(CalcPanel):
         idx = self.category.findData(last_cat)
         if idx >= 0:
             self.category.setCurrentIndex(idx)
-        self.category.currentIndexChanged.connect(self._on_category_changed)
+        self.category.currentIndexChanged.connect(
+            self._on_category_changed)
 
+        # ---------------- 输入 ----------------
         self.value = QLineEdit("1")
+        self.primary_input = self.value
         self.from_u = QComboBox()
         self.to_u = QComboBox()
         for c in (self.from_u, self.to_u):
@@ -42,10 +46,12 @@ class UnitPanel(CalcPanel):
         self.result = QPlainTextEdit()
         self.result.setReadOnly(True)
 
+        # ---------------- 快捷按钮 ----------------
         self.quick_box = QWidget()
         self.quick_row = QHBoxLayout(self.quick_box)
         self.quick_row.setContentsMargins(0, 0, 0, 0)
 
+        # ---------------- 批量换算 ----------------
         self.batch_targets = QLineEdit()
         self.batch_table = QTableWidget(0, 2)
         self.batch_table.setHorizontalHeaderLabels(
@@ -60,7 +66,8 @@ class UnitPanel(CalcPanel):
         btn_batch.clicked.connect(self.convert_batch)
 
         form = QGridLayout()
-        form.addWidget(QLabel(i18n.t("category", "Category")), 0, 0)
+        form.addWidget(QLabel(i18n.t("category", "Category")),
+                       0, 0)
         form.addWidget(self.category, 0, 1)
         form.addWidget(QLabel(i18n.t("value")), 1, 0)
         form.addWidget(self.value, 1, 1)
@@ -68,15 +75,18 @@ class UnitPanel(CalcPanel):
         form.addWidget(self.from_u, 2, 1)
         form.addWidget(QLabel(i18n.t("to")), 3, 0)
         form.addWidget(self.to_u, 3, 1)
-        form.addWidget(QLabel(i18n.t("targets", "Targets")), 4, 0)
+        form.addWidget(QLabel(i18n.t("targets", "Targets")),
+                       4, 0)
         form.addWidget(self.batch_targets, 4, 1)
 
         main = QVBoxLayout(self)
         main.addLayout(form)
-        main.addWidget(QLabel(i18n.t("quick", "Quick convert")))
+        main.addWidget(QLabel(
+            i18n.t("quick", "Quick convert")))
         main.addWidget(self.quick_box)
         main.addWidget(btn)
-        main.addWidget(QLabel(i18n.t("batch_table", "Batch table")))
+        main.addWidget(QLabel(
+            i18n.t("batch_table", "Batch table")))
         main.addWidget(self.batch_table)
         main.addWidget(btn_batch)
         main.addWidget(QLabel(i18n.t("result")))
@@ -87,7 +97,9 @@ class UnitPanel(CalcPanel):
         # 订阅跨面板信号
         bus().send_to_unit.connect(self.receive_text)
 
-    # ---------------- 类别 ----------------
+    # ==================================================================
+    # 类别
+    # ==================================================================
 
     def _on_category_changed(self):
         cat_key = self.category.currentData()
@@ -97,7 +109,8 @@ class UnitPanel(CalcPanel):
             return
         units = cat["units"]
 
-        for combo, default_idx in ((self.from_u, 0), (self.to_u, 1)):
+        for combo, default_idx in ((self.from_u, 0),
+                                    (self.to_u, 1)):
             combo.blockSignals(True)
             combo.clear()
             for label, pint in units:
@@ -117,7 +130,8 @@ class UnitPanel(CalcPanel):
         for label, pint in units[:8]:
             b = QPushButton(label)
             b.setFixedHeight(26)
-            b.clicked.connect(lambda _, p=pint: self._quick_convert(p))
+            b.clicked.connect(
+                lambda _, p=pint: self._quick_convert(p))
             self.quick_row.addWidget(b)
         self.quick_row.addStretch(1)
 
@@ -130,7 +144,9 @@ class UnitPanel(CalcPanel):
         except Exception as e:
             log_exc(e, module="UnitPanel._quick_convert")
 
-    # ---------------- 换算 ----------------
+    # ==================================================================
+    # 换算
+    # ==================================================================
 
     def convert(self):
         try:
@@ -138,18 +154,22 @@ class UnitPanel(CalcPanel):
             fu = self.from_u.currentData()
             tu = self.to_u.currentData()
             r = engine.unit_convert(v, fu, tu)
-            self.result.setPlainText(f"{v} {fu} = {r} {tu}")
-            self.add_history(f"{v} {fu} -> {tu}", r, module="unit")
+            self.result.setPlainText(
+                f"{v} {fu} = {r} {tu}")
+            self.add_history(
+                f"{v} {fu} -> {tu}", r, module="unit")
         except Exception as e:
-            self.result.setPlainText(friendly_error(self.i18n, e, "unit"))
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "unit"))
 
     def convert_batch(self):
         try:
             v = float(self.value.text())
             fu = self.from_u.currentData()
-            targets = [t.strip()
-                       for t in self.batch_targets.text().split(",")
-                       if t.strip()]
+            targets = [
+                t.strip()
+                for t in self.batch_targets.text().split(",")
+                if t.strip()]
             self.batch_table.setRowCount(0)
             for t in targets:
                 idx = self.to_u.findData(t)
@@ -163,33 +183,37 @@ class UnitPanel(CalcPanel):
                 row = self.batch_table.rowCount()
                 self.batch_table.insertRow(row)
                 self.batch_table.setItem(
-                    row, 0, QTableWidgetItem(self.to_u.itemText(idx)))
-                self.batch_table.setItem(row, 1, QTableWidgetItem(str(r)))
+                    row, 0,
+                    QTableWidgetItem(self.to_u.itemText(idx)))
+                self.batch_table.setItem(
+                    row, 1, QTableWidgetItem(str(r)))
             self.add_history(
                 f"{v} {fu} -> {targets}",
                 f"{self.batch_table.rowCount()} rows",
                 module="unit-batch")
         except Exception as e:
-            self.result.setPlainText(friendly_error(self.i18n, e, "unit"))
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "unit"))
 
-    # ---------------- 跨面板接收 ----------------
+    # ==================================================================
+    # 跨面板接收
+    # ==================================================================
 
     def receive_text(self, text: str):
         """接收 "1.5 km" / "1.5 kilometer" 之类的文本。"""
         try:
             s = str(text).strip()
-            # 忽略多行的（例如错误卡片），只处理单行"数字 + 单位"模式
             if "\n" in s:
                 return
             m = re.match(
-                r"^\s*(-?\d+\.?\d*(?:[eE][-+]?\d+)?)\s+([A-Za-z°μµ/²³·]+.*?)\s*$",
+                r"^\s*(-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+                r"\s+([A-Za-z°μµ/²³·]+.*?)\s*$",
                 s)
             if not m:
                 return
             value_str = m.group(1)
             unit_str = m.group(2).strip()
             self.value.setText(value_str)
-            # 优先精确匹配；找不到则跳过
             idx = self.from_u.findData(unit_str)
             if idx < 0:
                 for i in range(self.from_u.count()):
@@ -199,8 +223,10 @@ class UnitPanel(CalcPanel):
             if idx >= 0:
                 self.from_u.setCurrentIndex(idx)
             else:
-                # 可编辑：直接填入
                 self.from_u.setEditText(unit_str)
             self.convert()
         except Exception as e:
             log_exc(e, module="UnitPanel.receive_text")
+
+
+__all__ = ["UnitPanel"]

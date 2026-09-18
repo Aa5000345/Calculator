@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
-    QSpinBox, QFormLayout, QListWidget, QListWidgetItem,
+    QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QTabWidget,
+    QWidget, QSpinBox, QFormLayout, QListWidget, QListWidgetItem,
 )
 
 from .base import CalcPanel
@@ -24,35 +24,50 @@ class TimerPanel(CalcPanel):
         super().__init__(settings, i18n, history)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_countdown(), i18n.t("countdown", "倒计时"))
-        tabs.addTab(self._build_stopwatch(), i18n.t("stopwatch", "秒表"))
-        tabs.addTab(self._build_pomodoro(), i18n.t("pomodoro", "番茄钟"))
+        tabs.addTab(self._build_countdown(),
+                    i18n.t("countdown", "倒计时"))
+        tabs.addTab(self._build_stopwatch(),
+                    i18n.t("stopwatch", "秒表"))
+        tabs.addTab(self._build_pomodoro(),
+                    i18n.t("pomodoro", "番茄钟"))
 
         main = QVBoxLayout(self)
         main.addWidget(tabs)
 
-    # ---------------- 倒计时 ----------------
+    # ==================================================================
+    # 倒计时
+    # ==================================================================
 
     def _build_countdown(self):
-        w = QWidget(); v = QVBoxLayout(w)
+        w = QWidget()
+        v = QVBoxLayout(w)
         self.cd_display = QLabel("00:00:00")
         self.cd_display.setAlignment(Qt.AlignCenter)
         self.cd_display.setStyleSheet(
-            "font-size: 36pt; font-family: Consolas, monospace;")
+            "font-size: 36pt;"
+            " font-family: Consolas, monospace;")
 
-        self.cd_h = QSpinBox(); self.cd_h.setRange(0, 99)
-        self.cd_m = QSpinBox(); self.cd_m.setRange(0, 59)
-        self.cd_s = QSpinBox(); self.cd_s.setRange(0, 59)
+        self.cd_h = QSpinBox()
+        self.cd_h.setRange(0, 99)
+        self.cd_m = QSpinBox()
+        self.cd_m.setRange(0, 59)
+        self.cd_s = QSpinBox()
+        self.cd_s.setRange(0, 59)
 
-        b_start = QPushButton(self.i18n.t("start", "开始"))
-        b_pause = QPushButton(self.i18n.t("pause", "暂停"))
-        b_reset = QPushButton(self.i18n.t("reset", "重置"))
+        b_start = QPushButton(
+            self.i18n.t("start", "开始"))
+        b_pause = QPushButton(
+            self.i18n.t("pause", "暂停"))
+        b_reset = QPushButton(
+            self.i18n.t("reset", "重置"))
         b_start.clicked.connect(self._cd_start)
         b_pause.clicked.connect(self._cd_pause)
         b_reset.clicked.connect(self._cd_reset)
 
         form = QHBoxLayout()
-        for w_, lbl in ((self.cd_h, "H"), (self.cd_m, "M"), (self.cd_s, "S")):
+        for w_, lbl in ((self.cd_h, "H"),
+                        (self.cd_m, "M"),
+                        (self.cd_s, "S")):
             form.addWidget(QLabel(lbl))
             form.addWidget(w_)
 
@@ -101,18 +116,24 @@ class TimerPanel(CalcPanel):
         else:
             self.cd_display.setText(_fmt(self._cd_left))
 
-    # ---------------- 秒表 ----------------
+    # ==================================================================
+    # 秒表
+    # ==================================================================
 
     def _build_stopwatch(self):
-        w = QWidget(); v = QVBoxLayout(w)
+        w = QWidget()
+        v = QVBoxLayout(w)
         self.sw_display = QLabel("00:00:00")
         self.sw_display.setAlignment(Qt.AlignCenter)
         self.sw_display.setStyleSheet(
-            "font-size: 36pt; font-family: Consolas, monospace;")
+            "font-size: 36pt;"
+            " font-family: Consolas, monospace;")
 
-        b_start = QPushButton(self.i18n.t("start", "开始"))
+        b_start = QPushButton(
+            self.i18n.t("start", "开始"))
         b_lap = QPushButton(self.i18n.t("lap", "计次"))
-        b_reset = QPushButton(self.i18n.t("reset", "重置"))
+        b_reset = QPushButton(
+            self.i18n.t("reset", "重置"))
         b_start.clicked.connect(self._sw_toggle)
         b_lap.clicked.connect(self._sw_lap)
         b_reset.clicked.connect(self._sw_reset)
@@ -140,18 +161,21 @@ class TimerPanel(CalcPanel):
         if self._sw_running:
             self._sw_timer.stop()
             self._sw_running = False
-            self._sw_btn.setText(self.i18n.t("start", "开始"))
+            self._sw_btn.setText(
+                self.i18n.t("start", "开始"))
         else:
             self._sw_timer.start()
             self._sw_running = True
-            self._sw_btn.setText(self.i18n.t("pause", "暂停"))
+            self._sw_btn.setText(
+                self.i18n.t("pause", "暂停"))
 
     def _sw_tick(self):
         self._sw_ms += 100
         self.sw_display.setText(_fmt(self._sw_ms / 1000))
 
     def _sw_lap(self):
-        self.sw_laps.addItem(QListWidgetItem(self.sw_display.text()))
+        self.sw_laps.addItem(
+            QListWidgetItem(self.sw_display.text()))
 
     def _sw_reset(self):
         self._sw_timer.stop()
@@ -161,20 +185,30 @@ class TimerPanel(CalcPanel):
         self.sw_laps.clear()
         self._sw_btn.setText(self.i18n.t("start", "开始"))
 
-    # ---------------- 番茄钟 ----------------
+    # ==================================================================
+    # 番茄钟
+    # ==================================================================
 
     def _build_pomodoro(self):
-        w = QWidget(); v = QVBoxLayout(w)
+        w = QWidget()
+        v = QVBoxLayout(w)
         self.pm_display = QLabel("25:00")
         self.pm_display.setAlignment(Qt.AlignCenter)
         self.pm_display.setStyleSheet(
-            "font-size: 48pt; font-family: Consolas, monospace;")
+            "font-size: 48pt;"
+            " font-family: Consolas, monospace;")
 
-        self.pm_min = QSpinBox(); self.pm_min.setRange(1, 120); self.pm_min.setValue(25)
-        self.pm_break = QSpinBox(); self.pm_break.setRange(1, 60); self.pm_break.setValue(5)
+        self.pm_min = QSpinBox()
+        self.pm_min.setRange(1, 120)
+        self.pm_min.setValue(25)
+        self.pm_break = QSpinBox()
+        self.pm_break.setRange(1, 60)
+        self.pm_break.setValue(5)
 
-        b_start = QPushButton(self.i18n.t("start", "开始"))
-        b_reset = QPushButton(self.i18n.t("reset", "重置"))
+        b_start = QPushButton(
+            self.i18n.t("start", "开始"))
+        b_reset = QPushButton(
+            self.i18n.t("reset", "重置"))
         b_start.clicked.connect(self._pm_start)
         b_reset.clicked.connect(self._pm_reset)
 
@@ -209,7 +243,8 @@ class TimerPanel(CalcPanel):
         self._pm_timer.stop()
         self._pm_left = 0
         self._pm_mode = "work"
-        self.pm_display.setText(f"{self.pm_min.value():02d}:00")
+        self.pm_display.setText(
+            f"{self.pm_min.value():02d}:00")
 
     def _pm_tick(self):
         self._pm_left -= 1
@@ -228,3 +263,6 @@ class TimerPanel(CalcPanel):
         m, s = divmod(self._pm_left, 60)
         tag = "🍅" if self._pm_mode == "work" else "☕"
         self.pm_display.setText(f"{tag} {m:02d}:{s:02d}")
+
+
+__all__ = ["TimerPanel"]

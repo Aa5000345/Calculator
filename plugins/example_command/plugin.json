@@ -1,0 +1,7 @@
+{
+  "name": "Example Command",
+  "version": "1.0.0",
+  "description": "示例插件：注册一个命令面板命令 + 一个菜单项 + 一个面板",
+  "author": "MultiCalc",
+  "enabled": false
+}

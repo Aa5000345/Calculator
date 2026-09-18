@@ -1,15 +1,21 @@
 """截图 / 图片 → 表达式。
 
 支持：打开文件 / Ctrl+V 粘贴 / 拖放。识别在 QThread 中执行。
+
+变更历史：
+- 第 2 轮：_RecognizeWorker 增加 cancel() 与 _cancelled 标志；
+        closeEvent 先 cancel() 再 wait()
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QPixmap, QImage, QKeySequence, QShortcut,
+)
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QComboBox, QFileDialog, QMessageBox, QApplication, QScrollArea,
-    QWidget,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QComboBox, QFileDialog, QMessageBox,
+    QApplication, QScrollArea, QWidget,
 )
 
 from core import visual_input
@@ -21,23 +27,35 @@ class _RecognizeWorker(QThread):
     done = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, image_bytes: bytes, provider: str, api_key: str,
-                 parent=None):
+    def __init__(self, image_bytes: bytes, provider: str,
+                 api_key: str, parent=None):
         super().__init__(parent)
         self._image_bytes = image_bytes
         self._provider = provider
         self._api_key = api_key
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        return self._cancelled
 
     def run(self):
         try:
+            if self._cancelled:
+                return
             r = visual_input.recognize_image(
                 self._image_bytes,
                 provider=self._provider,
                 api_key=self._api_key,
             )
+            if self._cancelled:
+                return
             self.done.emit(r if isinstance(r, dict) else {})
         except Exception as e:  # noqa: BLE001
-            self.failed.emit(str(e))
+            if not self._cancelled:
+                self.failed.emit(str(e))
 
 
 class OCRInputDialog(QDialog):
@@ -46,7 +64,8 @@ class OCRInputDialog(QDialog):
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
         self.i18n = i18n
-        self.setWindowTitle(i18n.t("ocr_title", "截图 / 图片识别"))
+        self.setWindowTitle(i18n.t(
+            "ocr_title", "截图 / 图片识别"))
         self.resize(720, 560)
         self.setAcceptDrops(True)
 
@@ -54,12 +73,14 @@ class OCRInputDialog(QDialog):
         self._image_bytes: bytes = b""
         self._worker: _RecognizeWorker | None = None
 
-        # 图片预览
+        # ---------------- 图片预览 ----------------
         self.preview = QLabel()
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setMinimumHeight(280)
         self.preview.setStyleSheet(
-            "background: #fafafa; border: 1px dashed #888; border-radius: 4px;")
+            "background: #fafafa;"
+            "border: 1px dashed #888;"
+            "border-radius: 4px;")
         self.preview.setText(i18n.t(
             "ocr_drop_hint",
             "点击「打开图片」、Ctrl+V 粘贴，或把图片拖到这里"))
@@ -71,16 +92,20 @@ class OCRInputDialog(QDialog):
         wv.addWidget(self.preview)
         scroll.setWidget(wrapper)
 
-        b_open = QPushButton(i18n.t("open_image", "打开图片"))
+        # ---------------- 工具按钮 ----------------
+        b_open = QPushButton(
+            i18n.t("open_image", "打开图片"))
         b_open.clicked.connect(self._open_file)
-        b_paste = QPushButton(i18n.t("paste_image", "粘贴 (Ctrl+V)"))
+        b_paste = QPushButton(
+            i18n.t("paste_image", "粘贴 (Ctrl+V)"))
         b_paste.clicked.connect(self._paste)
         b_clear = QPushButton(i18n.t("clear", "清空"))
         b_clear.clicked.connect(self._clear)
 
         self.provider_box = QComboBox()
         self._populate_providers()
-        self.b_recognize = QPushButton(i18n.t("recognize", "识别"))
+        self.b_recognize = QPushButton(
+            i18n.t("recognize", "识别"))
         self.b_recognize.clicked.connect(self._recognize)
 
         tools = QHBoxLayout()
@@ -88,21 +113,26 @@ class OCRInputDialog(QDialog):
         tools.addWidget(b_paste)
         tools.addWidget(b_clear)
         tools.addStretch(1)
-        tools.addWidget(QLabel(i18n.t("backend", "识别后端")))
+        tools.addWidget(QLabel(
+            i18n.t("backend", "识别后端")))
         tools.addWidget(self.provider_box)
         tools.addWidget(self.b_recognize)
 
+        # ---------------- 表达式输入 ----------------
         self.expr_edit = QLineEdit()
-        self.expr_edit.setPlaceholderText(
-            i18n.t("ocr_expr_hint",
-                   "识别结果会出现在这里；也可直接手动输入"))
+        self.expr_edit.setPlaceholderText(i18n.t(
+            "ocr_expr_hint",
+            "识别结果会出现在这里；也可直接手动输入"))
         self.expr_edit.returnPressed.connect(self._accept_expr)
 
+        # ---------------- 状态 ----------------
         self.status = QLabel("")
         self.status.setStyleSheet("color: #888;")
         self.status.setWordWrap(True)
 
-        b_insert = QPushButton(i18n.t("insert_to_input", "插入到当前输入框"))
+        # ---------------- 底部按钮 ----------------
+        b_insert = QPushButton(
+            i18n.t("insert_to_input", "插入到当前输入框"))
         b_insert.setDefault(True)
         b_insert.clicked.connect(self._accept_expr)
         b_cancel = QPushButton(i18n.t("cancel", "取消"))
@@ -113,6 +143,7 @@ class OCRInputDialog(QDialog):
         bottom.addWidget(b_cancel)
         bottom.addWidget(b_insert)
 
+        # ---------------- 主布局 ----------------
         main = QVBoxLayout(self)
         main.addWidget(scroll, 1)
         main.addLayout(tools)
@@ -124,7 +155,7 @@ class OCRInputDialog(QDialog):
         sc = QShortcut(QKeySequence("Ctrl+V"), self)
         sc.activated.connect(self._paste)
 
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _populate_providers(self):
         try:
@@ -133,12 +164,15 @@ class OCRInputDialog(QDialog):
             api_key = ""
         self.provider_box.clear()
         for r in visual_input.list_recognizers(api_key=api_key):
-            label = r["label"] + ("" if r["available"] else f"（{r['hint']}）")
+            label = r["label"] + (
+                "" if r["available"]
+                else f"（{r['hint']}）")
             self.provider_box.addItem(label, r["name"])
             idx = self.provider_box.count() - 1
             if not r["available"]:
                 try:
-                    self.provider_box.model().item(idx).setEnabled(False)
+                    self.provider_box.model().item(
+                        idx).setEnabled(False)
                 except Exception:
                     pass
         for i in range(self.provider_box.count()):
@@ -150,7 +184,9 @@ class OCRInputDialog(QDialog):
             except Exception:
                 break
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 拖放
+    # ==================================================================
 
     def dragEnterEvent(self, e):
         md = e.mimeData()
@@ -173,12 +209,13 @@ class OCRInputDialog(QDialog):
         except Exception as ex:
             log_exc(ex, module="OCRInputDialog.dropEvent")
 
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _open_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Image", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;All Files (*)")
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;"
+            "All Files (*)")
         if not path:
             return
         self._load_file(path)
@@ -205,7 +242,8 @@ class OCRInputDialog(QDialog):
             img: QImage = cb.image()
             if img is None or img.isNull():
                 self.status.setText(self.i18n.t(
-                    "no_image_in_clipboard", "剪贴板里没有图片"))
+                    "no_image_in_clipboard",
+                    "剪贴板里没有图片"))
                 return
             self._set_image_from_qimage(img)
         except Exception as e:
@@ -222,29 +260,36 @@ class OCRInputDialog(QDialog):
             self.preview.setPixmap(
                 pm.scaled(600, 360, Qt.KeepAspectRatio,
                           Qt.SmoothTransformation))
-            self.status.setText(self.i18n.t("image_loaded", "已加载图片"))
+            self.status.setText(
+                self.i18n.t("image_loaded", "已加载图片"))
         except Exception as e:
-            log_exc(e, module="OCRInputDialog._set_image_from_qimage")
+            log_exc(
+                e, module="OCRInputDialog._set_image_from_qimage")
 
     def _clear(self):
         self._image_bytes = b""
         self.preview.setPixmap(QPixmap())
         self.preview.setText(self.i18n.t(
             "ocr_drop_hint",
-            "点击「打开图片」、Ctrl+V 粘贴，或把图片拖到这里"))
+            "点击「打开图片」、Ctrl+V 粘贴，"
+            "或把图片拖到这里"))
         self.expr_edit.clear()
         self.status.setText("")
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 识别
+    # ==================================================================
 
     def _recognize(self):
-        if self._worker is not None and self._worker.isRunning():
+        if (self._worker is not None
+                and self._worker.isRunning()):
             self.status.setText(self.i18n.t(
                 "recognize_busy", "识别进行中，请稍候…"))
             return
 
         if not self._image_bytes:
-            self.status.setText(self.i18n.t("no_image", "请先加载图片"))
+            self.status.setText(
+                self.i18n.t("no_image", "请先加载图片"))
             return
 
         provider = self.provider_box.currentData() or "manual"
@@ -260,8 +305,11 @@ class OCRInputDialog(QDialog):
             api_key = ""
 
         try:
-            infos = {r["name"]: r for r in
-                     visual_input.list_recognizers(api_key=api_key)}
+            infos = {
+                r["name"]: r
+                for r in visual_input.list_recognizers(
+                    api_key=api_key)
+            }
             info = infos.get(provider)
             if info is not None and not info.get("available"):
                 self.status.setText(
@@ -274,16 +322,19 @@ class OCRInputDialog(QDialog):
         if provider == "pix2tex":
             self.status.setText(self.i18n.t(
                 "recognize_loading_pix2tex",
-                "正在识别（首次使用 pix2tex 需加载模型，可能 30–60 秒）…"))
+                "正在识别（首次使用 pix2tex 需加载模型，"
+                "可能 30–60 秒）…"))
         else:
-            self.status.setText(self.i18n.t("running", "识别中…"))
+            self.status.setText(
+                self.i18n.t("running", "识别中…"))
 
         self.b_recognize.setEnabled(False)
         QApplication.setOverrideCursor(Qt.BusyCursor)
 
         try:
-            worker = _RecognizeWorker(self._image_bytes, provider, api_key,
-                                      parent=self)
+            worker = _RecognizeWorker(
+                self._image_bytes, provider, api_key,
+                parent=self)
             worker.done.connect(self._on_recognize_done)
             worker.failed.connect(self._on_recognize_failed)
             worker.finished.connect(self._on_worker_finished)
@@ -303,7 +354,8 @@ class OCRInputDialog(QDialog):
                 self.expr_edit.setText(expr)
                 self.status.setText(f"✓ provider={provider}")
             else:
-                self.status.setText(f"✗ {err or '未识别到表达式'}")
+                self.status.setText(
+                    f"✗ {err or '未识别到表达式'}")
         except Exception as e:
             log_exc(e, module="OCRInputDialog._on_recognize_done")
 
@@ -327,13 +379,13 @@ class OCRInputDialog(QDialog):
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _accept_expr(self):
         text = self.expr_edit.text().strip()
         if not text:
-            self.status.setText(
-                self.i18n.t("expr_required", "请先输入或识别表达式"))
+            self.status.setText(self.i18n.t(
+                "expr_required", "请先输入或识别表达式"))
             self.expr_edit.setFocus()
             return
         self.expression = text
@@ -343,13 +395,14 @@ class OCRInputDialog(QDialog):
             pass
         self.accept()
 
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def closeEvent(self, e):
         try:
-            if self._worker is not None and self._worker.isRunning():
-                self._worker.quit()
-                self._worker.wait(3000)
+            w = self._worker
+            if w is not None and w.isRunning():
+                w.cancel()
+                w.wait(3000)
         except Exception:
             pass
         try:
@@ -357,3 +410,6 @@ class OCRInputDialog(QDialog):
         except Exception:
             pass
         super().closeEvent(e)
+
+
+__all__ = ["OCRInputDialog"]

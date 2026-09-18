@@ -16,17 +16,16 @@ from dataclasses import dataclass
 class Key:
     """一个按键。
 
-    字段说明：
     - label       : 主标签
     - insert      : 点击时插入的文本
-    - action      : 特殊动作（"equals" / "clear" / "backspace" / "second"
-                    / "mem_*" / "cursor_*"）
+    - action      : 特殊动作（"equals" / "clear" / "backspace" /
+                    "second" / "mem_*" / "cursor_*"）
     - alt_label   : 2ⁿᵈ 状态下的标签
     - alt_insert  : 2ⁿᵈ 状态下的插入文本
     - alt_action  : 2ⁿᵈ 状态下的动作
     - tooltip     : 悬浮提示
     - style       : 主题键（num / op / fn / danger / accent）
-    - span        : 跨列数（暂只支持 1）
+    - span        : 跨列数
     """
     label: str
     insert: str = ""
@@ -43,7 +42,7 @@ class Key:
 class Layout:
     name: str
     label: str
-    rows: tuple  # tuple[tuple[Key, ...], ...]
+    rows: tuple
 
 
 # =====================================================================
@@ -80,17 +79,25 @@ LAYOUT_SCIENTIFIC = Layout(
     name="scientific",
     label="科学",
     rows=(
-        (Key("sin", "sin(", alt_label="sin⁻¹", alt_insert="asin(", style="fn"),
-         Key("cos", "cos(", alt_label="cos⁻¹", alt_insert="acos(", style="fn"),
-         Key("tan", "tan(", alt_label="tan⁻¹", alt_insert="atan(", style="fn"),
-         Key("ln", "log(", alt_label="eˣ", alt_insert="exp(", style="fn"),
-         Key("log", "log10(", alt_label="10ˣ", alt_insert="10^", style="fn"),
-         Key("√", "sqrt(", alt_label="∛", alt_insert="cbrt(", style="fn")),
+        (Key("sin", "sin(", alt_label="sin⁻¹",
+             alt_insert="asin(", style="fn"),
+         Key("cos", "cos(", alt_label="cos⁻¹",
+             alt_insert="acos(", style="fn"),
+         Key("tan", "tan(", alt_label="tan⁻¹",
+             alt_insert="atan(", style="fn"),
+         Key("ln", "log(", alt_label="eˣ",
+             alt_insert="exp(", style="fn"),
+         Key("log", "log10(", alt_label="10ˣ",
+             alt_insert="10^", style="fn"),
+         Key("√", "sqrt(", alt_label="∛",
+             alt_insert="cbrt(", style="fn")),
         (Key("π", "pi", style="fn"),
          Key("e", "e", style="fn"),
-         Key("x²", "^2", alt_label="x³", alt_insert="^3", style="fn"),
+         Key("x²", "^2", alt_label="x³",
+             alt_insert="^3", style="fn"),
          Key("xʸ", "^", style="fn"),
-         Key("!", "factorial(", alt_label="Γ", alt_insert="gamma(", style="fn"),
+         Key("!", "factorial(", alt_label="Γ",
+             alt_insert="gamma(", style="fn"),
          Key("|x|", "Abs(", style="fn")),
     ) + _NUM_BLOCK,
 )
@@ -99,9 +106,12 @@ LAYOUT_MATRIX = Layout(
     name="matrix",
     label="矩阵",
     rows=(
-        (Key("det", "det", style="fn"), Key("inv", "inv", style="fn"),
-         Key("T", "transpose", style="fn"), Key("rank", "rank", style="fn"),
-         Key("rref", "rref", style="fn"), Key("tr", "trace", style="fn")),
+        (Key("det", "det", style="fn"),
+         Key("inv", "inv", style="fn"),
+         Key("T", "transpose", style="fn"),
+         Key("rank", "rank", style="fn"),
+         Key("rref", "rref", style="fn"),
+         Key("tr", "trace", style="fn")),
     ) + _NUM_BLOCK,
 )
 
@@ -109,12 +119,17 @@ LAYOUT_PLOT = Layout(
     name="plot",
     label="绘图",
     rows=(
-        (Key("sin", "sin(", style="fn"), Key("cos", "cos(", style="fn"),
-         Key("tan", "tan(", style="fn"), Key("exp", "exp(", style="fn"),
-         Key("log", "log(", style="fn"), Key("ln", "ln(", style="fn")),
+        (Key("sin", "sin(", style="fn"),
+         Key("cos", "cos(", style="fn"),
+         Key("tan", "tan(", style="fn"),
+         Key("exp", "exp(", style="fn"),
+         Key("log", "log(", style="fn"),
+         Key("ln", "ln(", style="fn")),
         (Key("x", "x", style="fn"), Key("t", "t", style="fn"),
-         Key("θ", "theta", style="fn"), Key("π", "pi", style="fn"),
-         Key("e", "e", style="fn"), Key("^", "^", style="fn")),
+         Key("θ", "theta", style="fn"),
+         Key("π", "pi", style="fn"),
+         Key("e", "e", style="fn"),
+         Key("^", "^", style="fn")),
     ) + _NUM_BLOCK,
 )
 
@@ -122,12 +137,17 @@ LAYOUT_PLOT3D = Layout(
     name="plot3d",
     label="3D 绘图",
     rows=(
-        (Key("sin", "sin(", style="fn"), Key("cos", "cos(", style="fn"),
-         Key("tan", "tan(", style="fn"), Key("exp", "exp(", style="fn"),
-         Key("log", "log(", style="fn"), Key("ln", "ln(", style="fn")),
+        (Key("sin", "sin(", style="fn"),
+         Key("cos", "cos(", style="fn"),
+         Key("tan", "tan(", style="fn"),
+         Key("exp", "exp(", style="fn"),
+         Key("log", "log(", style="fn"),
+         Key("ln", "ln(", style="fn")),
         (Key("x", "x", style="fn"), Key("y", "y", style="fn"),
-         Key("t", "t", style="fn"), Key("π", "pi", style="fn"),
-         Key("e", "e", style="fn"), Key("^", "^", style="fn")),
+         Key("t", "t", style="fn"),
+         Key("π", "pi", style="fn"),
+         Key("e", "e", style="fn"),
+         Key("^", "^", style="fn")),
     ) + _NUM_BLOCK,
 )
 
@@ -135,9 +155,12 @@ LAYOUT_FINANCE = Layout(
     name="finance",
     label="财务",
     rows=(
-        (Key("$", "$", style="fn"), Key("%", "%", style="fn"),
-         Key("±", "-", style="fn"), Key("^", "^", style="fn"),
-         Key("(1+r)", "(1+r)", style="fn"), Key("n", "n", style="fn")),
+        (Key("$", "$", style="fn"),
+         Key("%", "%", style="fn"),
+         Key("±", "-", style="fn"),
+         Key("^", "^", style="fn"),
+         Key("(1+r)", "(1+r)", style="fn"),
+         Key("n", "n", style="fn")),
     ) + _NUM_BLOCK,
 )
 
@@ -145,10 +168,13 @@ LAYOUT_DATE = Layout(
     name="date",
     label="日期",
     rows=(
-        (Key("7"), Key("8"), Key("9"), Key("-", "-", style="op"),
+        (Key("7"), Key("8"), Key("9"),
+         Key("-", "-", style="op"),
          Key(":", ":"), Key("空格", " ", style="fn")),
-        (Key("4"), Key("5"), Key("6"), Key("/", "/", style="op"),
-         Key(".", "."), Key("⌫", action="backspace", style="danger")),
+        (Key("4"), Key("5"), Key("6"),
+         Key("/", "/", style="op"),
+         Key(".", "."),
+         Key("⌫", action="backspace", style="danger")),
         (Key("1"), Key("2"), Key("3"),
          Key("←", action="cursor_left", style="fn"),
          Key("→", action="cursor_right", style="fn"),
@@ -166,11 +192,16 @@ LAYOUT_UNIT = Layout(
     label="单位",
     rows=(
         (Key("km", " km", style="fn"), Key("m", " m", style="fn"),
-         Key("cm", " cm", style="fn"), Key("mm", " mm", style="fn"),
-         Key("kg", " kg", style="fn"), Key("g", " g", style="fn")),
-        (Key("°C", " degC", style="fn"), Key("°F", " degF", style="fn"),
-         Key("L", " L", style="fn"), Key("mL", " mL", style="fn"),
-         Key("h", " h", style="fn"), Key("min", " min", style="fn")),
+         Key("cm", " cm", style="fn"),
+         Key("mm", " mm", style="fn"),
+         Key("kg", " kg", style="fn"),
+         Key("g", " g", style="fn")),
+        (Key("°C", " degC", style="fn"),
+         Key("°F", " degF", style="fn"),
+         Key("L", " L", style="fn"),
+         Key("mL", " mL", style="fn"),
+         Key("h", " h", style="fn"),
+         Key("min", " min", style="fn")),
     ) + _NUM_BLOCK,
 )
 
@@ -178,9 +209,12 @@ LAYOUT_CURRENCY = Layout(
     name="currency",
     label="汇率",
     rows=(
-        (Key("USD", "USD", style="fn"), Key("CNY", "CNY", style="fn"),
-         Key("EUR", "EUR", style="fn"), Key("JPY", "JPY", style="fn"),
-         Key("GBP", "GBP", style="fn"), Key("HKD", "HKD", style="fn")),
+        (Key("USD", "USD", style="fn"),
+         Key("CNY", "CNY", style="fn"),
+         Key("EUR", "EUR", style="fn"),
+         Key("JPY", "JPY", style="fn"),
+         Key("GBP", "GBP", style="fn"),
+         Key("HKD", "HKD", style="fn")),
     ) + _NUM_BLOCK,
 )
 
@@ -188,10 +222,14 @@ LAYOUT_BASE = Layout(
     name="base",
     label="进制",
     rows=(
-        (Key("7"), Key("8"), Key("9"), Key("A", "A", style="op"),
-         Key("B", "B", style="op"), Key("C", "C", style="op")),
-        (Key("4"), Key("5"), Key("6"), Key("D", "D", style="op"),
-         Key("E", "E", style="op"), Key("F", "F", style="op")),
+        (Key("7"), Key("8"), Key("9"),
+         Key("A", "A", style="op"),
+         Key("B", "B", style="op"),
+         Key("C", "C", style="op")),
+        (Key("4"), Key("5"), Key("6"),
+         Key("D", "D", style="op"),
+         Key("E", "E", style="op"),
+         Key("F", "F", style="op")),
         (Key("1"), Key("2"), Key("3"),
          Key("0x", "0x", style="fn"),
          Key("0b", "0b", style="fn"),
@@ -218,7 +256,8 @@ LAYOUT_BITS = Layout(
          Key("A", "A", style="fn"), Key("B", "B", style="fn"),
          Key("C", "C", style="fn"), Key("D", "D", style="fn")),
         (Key("E", "E", style="fn"), Key("F", "F", style="fn"),
-         Key("0x", "0x", style="fn"), Key("0b", "0b", style="fn"),
+         Key("0x", "0x", style="fn"),
+         Key("0b", "0b", style="fn"),
          Key(".", "."),
          Key("⌫", action="backspace", style="danger")),
         (Key("7"), Key("8"), Key("9"),
@@ -228,7 +267,7 @@ LAYOUT_BITS = Layout(
     ),
 )
 
-# 加密工具复用进制布局（A-F + hex 前缀对 Base64/Hex/AES 输入都有用）
+# 加密工具复用进制布局
 LAYOUT_CRYPTO = Layout(
     name="crypto_tools",
     label="加密",
@@ -239,19 +278,28 @@ LAYOUT_LATEX = Layout(
     name="latex",
     label="LaTeX",
     rows=(
-        (Key("\\", "\\", style="fn"), Key("{", "{", style="fn"),
-         Key("}", "}", style="fn"), Key("_", "_", style="fn"),
-         Key("^", "^", style="fn"), Key("$", "$", style="fn")),
-        (Key("{}", "{}", style="fn"), Key("_{}", "_{}", style="fn"),
-         Key("^{}", "^{}", style="fn"), Key("_{}^{}", "_{}^{}", style="fn"),
+        (Key("\\", "\\", style="fn"),
+         Key("{", "{", style="fn"),
+         Key("}", "}", style="fn"),
+         Key("_", "_", style="fn"),
+         Key("^", "^", style="fn"),
+         Key("$", "$", style="fn")),
+        (Key("{}", "{}", style="fn"),
+         Key("_{}", "_{}", style="fn"),
+         Key("^{}", "^{}", style="fn"),
+         Key("_{}^{}", "_{}^{}", style="fn"),
          Key("sqrt", "\\sqrt{}", style="fn"),
          Key("frac", "\\frac{}{}", style="fn")),
-        (Key("α", "\\alpha ", style="fn"), Key("β", "\\beta ", style="fn"),
-         Key("θ", "\\theta ", style="fn"), Key("π", "\\pi ", style="fn"),
+        (Key("α", "\\alpha ", style="fn"),
+         Key("β", "\\beta ", style="fn"),
+         Key("θ", "\\theta ", style="fn"),
+         Key("π", "\\pi ", style="fn"),
          Key("∞", "\\infty ", style="fn"),
          Key("∂", "\\partial ", style="fn")),
-        (Key("sin", "\\sin ", style="fn"), Key("cos", "\\cos ", style="fn"),
-         Key("tan", "\\tan ", style="fn"), Key("log", "\\log ", style="fn"),
+        (Key("sin", "\\sin ", style="fn"),
+         Key("cos", "\\cos ", style="fn"),
+         Key("tan", "\\tan ", style="fn"),
+         Key("log", "\\log ", style="fn"),
          Key("ln", "\\ln ", style="fn"),
          Key("lim", "\\lim_{x\\to 0} ", style="fn")),
     ),
@@ -261,16 +309,21 @@ LAYOUT_SCRIPT = Layout(
     name="script",
     label="脚本",
     rows=(
-        (Key("7"), Key("8"), Key("9"), Key("/", "/", style="op"),
-         Key("(", "(", style="op"), Key(")", ")", style="op")),
-        (Key("4"), Key("5"), Key("6"), Key("*", "*", style="op"),
+        (Key("7"), Key("8"), Key("9"),
+         Key("/", "/", style="op"),
+         Key("(", "(", style="op"),
+         Key(")", ")", style="op")),
+        (Key("4"), Key("5"), Key("6"),
+         Key("*", "*", style="op"),
          Key("#", "#", style="fn"),
          Key("↵", "\n", style="fn")),
-        (Key("1"), Key("2"), Key("3"), Key("-", "-", style="op"),
+        (Key("1"), Key("2"), Key("3"),
+         Key("-", "-", style="op"),
          Key("=", "=", style="fn"),
          Key("空格", " ", style="fn")),
         (Key("0"), Key("."),
-         Key("x", "x", style="fn"), Key("y", "y", style="fn"),
+         Key("x", "x", style="fn"),
+         Key("y", "y", style="fn"),
          Key("C", action="clear", style="danger"),
          Key("⌫", action="backspace", style="danger")),
     ),
@@ -280,9 +333,11 @@ LAYOUT_DEFAULT = Layout(
     name="default",
     label="通用",
     rows=(
-        (Key("sin", "sin(", style="fn"), Key("cos", "cos(", style="fn"),
+        (Key("sin", "sin(", style="fn"),
+         Key("cos", "cos(", style="fn"),
          Key("tan", "tan(", style="fn"),
-         Key("π", "pi", style="fn"), Key("e", "e", style="fn"),
+         Key("π", "pi", style="fn"),
+         Key("e", "e", style="fn"),
          Key("^", "^", style="fn")),
     ) + _NUM_BLOCK,
 )
@@ -307,9 +362,6 @@ _LAYOUT_BY_MODULE = {
     "crypto_tools": LAYOUT_CRYPTO,
     "latex": LAYOUT_LATEX,
     "script": LAYOUT_SCRIPT,
-    # 未列出的面板回退到 LAYOUT_DEFAULT：
-    # stats / probability / random / data_table / tools /
-    # snippets / timer / clipboard_history / history / settings / ai
 }
 
 
@@ -328,3 +380,14 @@ def get_layout_name(module_key: str) -> str:
 def all_module_keys() -> list:
     """已注册专属布局的所有 module_key。"""
     return list(_LAYOUT_BY_MODULE.keys())
+
+
+__all__ = [
+    "Key", "Layout", "get_layout", "get_layout_name",
+    "all_module_keys",
+    "LAYOUT_BASIC", "LAYOUT_SCIENTIFIC", "LAYOUT_DEFAULT",
+    "LAYOUT_MATRIX", "LAYOUT_PLOT", "LAYOUT_PLOT3D",
+    "LAYOUT_FINANCE", "LAYOUT_DATE", "LAYOUT_UNIT",
+    "LAYOUT_CURRENCY", "LAYOUT_BASE", "LAYOUT_BITS",
+    "LAYOUT_CRYPTO", "LAYOUT_LATEX", "LAYOUT_SCRIPT",
+]

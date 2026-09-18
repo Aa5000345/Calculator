@@ -19,14 +19,20 @@ class SnippetsPanel(CalcPanel):
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
 
+        # ---------------- 搜索 ----------------
         self.search = QLineEdit()
-        self.search.setPlaceholderText(i18n.t("search", "搜索"))
+        self.search.setPlaceholderText(
+            i18n.t("search", "搜索"))
         self.search.textChanged.connect(self._reload)
 
+        # ---------------- 列表 ----------------
         self.list = QListWidget()
-        self.list.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.list.itemDoubleClicked.connect(lambda _: self._insert_current())
+        self.list.setSelectionMode(
+            QAbstractItemView.SingleSelection)
+        self.list.itemDoubleClicked.connect(
+            lambda _: self._insert_current())
 
+        # ---------------- 按钮 ----------------
         b_add = QPushButton(i18n.t("add", "新增"))
         b_edit = QPushButton(i18n.t("edit", "编辑"))
         b_del = QPushButton(i18n.t("delete", "删除"))
@@ -50,6 +56,8 @@ class SnippetsPanel(CalcPanel):
         self._items = []
         self._reload()
 
+    # ==================================================================
+
     def _reload(self):
         self.list.clear()
         q = self.search.text().strip().lower()
@@ -71,11 +79,13 @@ class SnippetsPanel(CalcPanel):
 
     def _add(self):
         name, ok = QInputDialog.getText(
-            self, self.i18n.t("add", "新增"), self.i18n.t("name", "名称"))
+            self, self.i18n.t("add", "新增"),
+            self.i18n.t("name", "名称"))
         if not ok or not name:
             return
         expr, ok = QInputDialog.getText(
-            self, self.i18n.t("add", "新增"), self.i18n.t("expr", "表达式"))
+            self, self.i18n.t("add", "新增"),
+            self.i18n.t("expr", "表达式"))
         if not ok or not expr:
             return
         snip_mod.add(name, expr)
@@ -86,12 +96,14 @@ class SnippetsPanel(CalcPanel):
         if cur is None:
             return
         name, ok = QInputDialog.getText(
-            self, self.i18n.t("edit", "编辑"), self.i18n.t("name", "名称"),
+            self, self.i18n.t("edit", "编辑"),
+            self.i18n.t("name", "名称"),
             text=cur.get("name", ""))
         if not ok:
             return
         expr, ok = QInputDialog.getText(
-            self, self.i18n.t("edit", "编辑"), self.i18n.t("expr", "表达式"),
+            self, self.i18n.t("edit", "编辑"),
+            self.i18n.t("expr", "表达式"),
             text=cur.get("expr", ""))
         if not ok:
             return
@@ -122,6 +134,10 @@ class SnippetsPanel(CalcPanel):
             QApplication.clipboard().setText(expr)
             QMessageBox.information(
                 self, "OK",
-                self.i18n.t("copied", "已复制到剪贴板") + f"\n{expr}")
+                self.i18n.t("copied", "已复制到剪贴板")
+                + f"\n{expr}")
         except Exception as e:
             log_exc(e, module="SnippetsPanel._insert_current")
+
+
+__all__ = ["SnippetsPanel"]

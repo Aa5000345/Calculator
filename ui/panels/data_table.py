@@ -1,4 +1,10 @@
-"""数据表编辑器面板：可编辑表头、公式列、导入/导出 CSV/JSON。"""
+"""数据表编辑器面板：可编辑表头、公式列、导入/导出 CSV/JSON。
+
+变更历史：
+- 第 1 轮：初版
+- 第 12 轮：右键菜单新增「发送到数据运算」
+- 第 19 轮：无数据时用 EmptyState
+"""
 from __future__ import annotations
 
 import json
@@ -7,12 +13,13 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QFileDialog, QMenu, QInputDialog,
+    QFileDialog, QMenu, QInputDialog, QStackedWidget,
 )
 
 from core import data_table as dt_mod
 from core.errors import InputError
 from core.logger import log_exc
+from ui.signals import bus
 from ._common import ResultView
 from .base import CalcPanel
 
@@ -25,12 +32,15 @@ class DataTablePanel(CalcPanel):
         self._formulas = {}
         self._suppress_item_changed = False
 
+        # ---------------- 表格 ----------------
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["A", "B", "C", "D"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.horizontalHeader().customContextMenuRequested.connect(
-            self._header_context_menu)
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch)
+        self.table.horizontalHeader().setContextMenuPolicy(
+            Qt.CustomContextMenu)
+        self.table.horizontalHeader().customContextMenuRequested\
+            .connect(self._header_context_menu)
 
         # 公式自动重算（防抖 350ms）
         self._recalc_timer = QTimer(self)
@@ -51,6 +61,8 @@ class DataTablePanel(CalcPanel):
         b_export = QPushButton(i18n.t("export_csv", "导出 CSV"))
         b_json = QPushButton(i18n.t("export_json", "导出 JSON"))
         b_calc = QPushButton(i18n.t("recalc", "重算公式"))
+        b_send = QPushButton(
+            i18n.t("send_to_data_ops", "发送到数据运算"))
 
         b_add.clicked.connect(self._append_row)
         b_del.clicked.connect(self._delete_rows)
@@ -60,28 +72,33 @@ class DataTablePanel(CalcPanel):
         b_export.clicked.connect(self._export_csv)
         b_json.clicked.connect(self._export_json)
         b_calc.clicked.connect(self._recalc_all)
+        b_send.clicked.connect(self._send_to_data_ops)
 
         row = QHBoxLayout()
         for b in (b_add, b_del, b_col, b_delcol, b_calc,
-                  b_import, b_export, b_json):
+                  b_import, b_export, b_json, b_send):
             row.addWidget(b)
         row.addStretch(1)
 
         # ---------------- 公式行 ----------------
         form_row = QHBoxLayout()
-        form_row.addWidget(QLabel(i18n.t("formula_col", "公式列")))
+        form_row.addWidget(QLabel(
+            i18n.t("formula_col", "公式列")))
         self.formula_col = QComboBox()
         self.formula_col.currentIndexChanged.connect(
             self._on_formula_col_changed)
         form_row.addWidget(self.formula_col)
-        form_row.addWidget(QLabel(i18n.t("formula", "公式")))
+        form_row.addWidget(QLabel(
+            i18n.t("formula", "公式")))
         self.formula_input = QLineEdit()
         self.formula_input.setPlaceholderText("=[A] + [B]")
-        self.formula_input.editingFinished.connect(self._save_formula)
+        self.formula_input.editingFinished.connect(
+            self._save_formula)
         form_row.addWidget(self.formula_input, 1)
 
         self.result = ResultView(i18n)
 
+        # ---------------- 主布局 ----------------
         main = QVBoxLayout(self)
         main.addLayout(row)
         main.addLayout(form_row)
@@ -90,9 +107,9 @@ class DataTablePanel(CalcPanel):
 
         self._refresh_formula_combo()
 
-    # ------------------------------------------------------------------
-    # 单元格变更 → 防抖重算
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 单元格变更
+    # ==================================================================
 
     def _on_cell_changed(self, _item):
         if self._suppress_item_changed:
@@ -102,15 +119,14 @@ class DataTablePanel(CalcPanel):
         self._recalc_timer.start()
 
     def _auto_recalc(self):
-        """防抖触发：静默重算，仅在出错时把结果写到 result。"""
         try:
             self._recalc_all(silent=True)
         except Exception as e:
             log_exc(e, module="DataTablePanel._auto_recalc")
 
-    # ------------------------------------------------------------------
+    # ==================================================================
     # 列管理
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _col_letter(self, idx):
         s = ""
@@ -132,8 +148,10 @@ class DataTablePanel(CalcPanel):
         for j in range(self.table.columnCount()):
             self.formula_col.addItem(self._col_name(j), j)
         self.formula_col.blockSignals(False)
-        if isinstance(cur, int) and 0 <= cur < self.formula_col.count():
-            self.formula_col.setCurrentIndex(self.formula_col.findData(cur))
+        if (isinstance(cur, int)
+                and 0 <= cur < self.formula_col.count()):
+            self.formula_col.setCurrentIndex(
+                self.formula_col.findData(cur))
 
     def _on_formula_col_changed(self):
         c = self.formula_col.currentData()
@@ -161,8 +179,9 @@ class DataTablePanel(CalcPanel):
         self._refresh_formula_combo()
 
     def _delete_cols(self):
-        cols = sorted({i.column() for i in self.table.selectedIndexes()},
-                      reverse=True)
+        cols = sorted(
+            {i.column() for i in self.table.selectedIndexes()},
+            reverse=True)
         if not cols and self.table.columnCount():
             cols = [self.table.columnCount() - 1]
         for c in cols:
@@ -176,7 +195,9 @@ class DataTablePanel(CalcPanel):
             self._formulas = new_f
         self._refresh_formula_combo()
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 行管理
+    # ==================================================================
 
     def _append_row(self):
         self._suppress_item_changed = True
@@ -184,23 +205,28 @@ class DataTablePanel(CalcPanel):
             r = self.table.rowCount()
             self.table.insertRow(r)
             for c in range(self.table.columnCount()):
-                self.table.setItem(r, c, QTableWidgetItem(""))
+                self.table.setItem(
+                    r, c, QTableWidgetItem(""))
         finally:
             self._suppress_item_changed = False
 
     def _delete_rows(self):
-        rows = sorted({i.row() for i in self.table.selectedIndexes()},
-                      reverse=True)
+        rows = sorted(
+            {i.row() for i in self.table.selectedIndexes()},
+            reverse=True)
         if not rows and self.table.rowCount():
             rows = [self.table.rowCount() - 1]
         for r in rows:
             self.table.removeRow(r)
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 数据转换
+    # ==================================================================
 
     def _to_data_table(self):
         dt = dt_mod.DataTable()
-        cols = [self._col_name(c) for c in range(self.table.columnCount())]
+        cols = [self._col_name(c)
+                for c in range(self.table.columnCount())]
         dt.set_columns(cols)
         for r in range(self.table.rowCount()):
             row = []
@@ -223,34 +249,44 @@ class DataTablePanel(CalcPanel):
                     v = dt.get_cell(r, c)
                     it = self.table.item(r, c)
                     if it is None:
-                        self.table.setItem(r, c, QTableWidgetItem(v))
+                        self.table.setItem(
+                            r, c, QTableWidgetItem(v))
                     elif it.text() != v:
                         it.setText(v)
             if not silent:
                 self.result.show_result(
-                    f"✓ {self.i18n.t('recalc_done', '重算完成')}", "")
+                    f"✓ {self.i18n.t('recalc_done', '重算完成')}",
+                    "")
         except Exception as e:
             if not silent:
                 self.result.show_error(e)
         finally:
             self._suppress_item_changed = False
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 表头右键
+    # ==================================================================
 
     def _header_context_menu(self, pos):
         idx = self.table.horizontalHeader().logicalIndexAt(pos)
         if idx < 0:
             return
         menu = QMenu(self)
-        a_rename = menu.addAction(self.i18n.t("rename_col", "重命名"))
-        a_setform = menu.addAction(self.i18n.t("set_formula", "设为公式列…"))
-        a_clearform = menu.addAction(self.i18n.t("clear_formula", "清除公式"))
-        chosen = menu.exec(self.table.horizontalHeader().mapToGlobal(pos))
+        a_rename = menu.addAction(
+            self.i18n.t("rename_col", "重命名"))
+        a_setform = menu.addAction(
+            self.i18n.t("set_formula", "设为公式列…"))
+        a_clearform = menu.addAction(
+            self.i18n.t("clear_formula", "清除公式"))
+        chosen = menu.exec(
+            self.table.horizontalHeader().mapToGlobal(pos))
         if chosen is a_rename:
             cur = self._col_name(idx)
             text, ok = QInputDialog.getText(
-                self, self.i18n.t("rename_col", "重命名"),
-                self.i18n.t("new_name", "新名称："), text=cur)
+                self,
+                self.i18n.t("rename_col", "重命名"),
+                self.i18n.t("new_name", "新名称："),
+                text=cur)
             if ok and text:
                 self.table.setHorizontalHeaderItem(
                     idx, QTableWidgetItem(text))
@@ -264,11 +300,14 @@ class DataTablePanel(CalcPanel):
             self._formulas.pop(idx, None)
             self._recalc_all()
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 导入 / 导出
+    # ==================================================================
 
     def _import_csv(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import CSV", "", "CSV (*.csv);;Text (*.txt)")
+            self, "Import CSV", "",
+            "CSV (*.csv);;Text (*.txt)")
         if not path:
             return
         try:
@@ -295,7 +334,8 @@ class DataTablePanel(CalcPanel):
                 self.table.insertRow(r)
                 for c in range(self.table.columnCount()):
                     v = row[c] if c < len(row) else ""
-                    self.table.setItem(r, c, QTableWidgetItem(str(v)))
+                    self.table.setItem(
+                        r, c, QTableWidgetItem(str(v)))
         finally:
             self._suppress_item_changed = False
         self._refresh_formula_combo()
@@ -307,7 +347,8 @@ class DataTablePanel(CalcPanel):
             return
         try:
             dt = self._to_data_table()
-            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            with open(path, "w", encoding="utf-8-sig",
+                      newline="") as f:
                 f.write(dt.to_csv())
             self.result.show_result(f"✓ {path}", "")
         except Exception as e:
@@ -315,7 +356,8 @@ class DataTablePanel(CalcPanel):
 
     def _export_json(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export JSON", "table.json", "JSON (*.json)")
+            self, "Export JSON", "table.json",
+            "JSON (*.json)")
         if not path:
             return
         try:
@@ -325,3 +367,27 @@ class DataTablePanel(CalcPanel):
             self.result.show_result(f"✓ {path}", "")
         except Exception as e:
             self.result.show_error(e)
+
+    # ==================================================================
+    # 发送到数据运算
+    # ==================================================================
+
+    def _send_to_data_ops(self):
+        """把当前表格发送到数据运算面板（CSV 文本）。"""
+        try:
+            dt = self._to_data_table()
+            csv_text = dt.to_csv()
+            bus().send_to_data_ops.emit(csv_text)
+            try:
+                from ui.toast import toast
+                toast(self.window(),
+                      self.i18n.t("sent_to_data_ops",
+                                  "已发送到数据运算面板"),
+                      level="success")
+            except Exception:
+                pass
+        except Exception as e:
+            log_exc(e, module="DataTablePanel._send_to_data_ops")
+
+
+__all__ = ["DataTablePanel"]

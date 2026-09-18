@@ -1,26 +1,60 @@
+# ==========================================================================
+# MultiCalc 运行依赖
+# Python 3.10+
+# ==========================================================================
+
+# ---- 核心 GUI ----
 PySide6>=6.6
+
+# ---- 计算内核 ----
 sympy>=1.12
 numpy>=1.26
-matplotlib>=3.8
-requests>=2.31
-pint>=0.23
 scipy>=1.11
-holidays>=0.46
+
+# ---- 绘图 ----
+matplotlib>=3.8
+
+# ---- 单位 ----
+pint>=0.23
+
+# ---- 网络 ----
+requests>=2.31
+
+# ---- 日期 / 时区 ----
 python-dateutil>=2.8
 pytz>=2024.1
 Babel>=2.14
-Pillow>=10.0
-cryptography>=42.0
+holidays>=0.46
 lunardate>=0.2
 astral>=3.2
+
+# ---- 图像 ----
+Pillow>=10.0
 qrcode[pil]>=7.4
 
-# ---- 可选：高级输入方式 ----
-# 手写 / 截图 OCR（LaTeX 识别，需要 torch，约 2GB 磁盘）
+# ---- 加密（v2 起）----
+# cryptography 48+ 内置 PQC 支持（ML-KEM / ML-DSA / SLH-DSA）
+# 需要 OpenSSL 3.5+ 或 AWS-LC / BoringSSL 后端
+cryptography>=48.0
+
+# 密码哈希
+argon2-cffi>=23.1.0
+bcrypt>=4.1.0
+
+# ==========================================================================
+# 可选依赖（不安装不影响主功能）
+# ==========================================================================
+
+# ---- 手写 / 截图 OCR ----
+# LaTeX OCR 识别，需要 torch（约 2GB 磁盘）
 # pip install pix2tex
-#
-# 语音输入（离线；如需启用可后续扩展）
-# pip install vosk
-#
-# 本地 LLM（AI 助手可选后端）
+
+# ---- 本地 LLM（AI 助手可选后端）----
 # https://ollama.com/
+# 安装后自动探测 localhost:11434
+
+# ---- 打包 ----
+# pip install pyinstaller
+
+# ---- 测试 ----
+# pip install pytest pytest-qt pytest-cov

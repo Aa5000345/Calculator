@@ -21,8 +21,8 @@ class KeyButton(QPushButton):
         self._second = False
         self.setFocusPolicy(Qt.NoFocus)
         self.setMinimumSize(36, 32)
-        # ⚠ 修复：Expanding 是 QSizePolicy 类的枚举，不是实例属性
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Expanding,
+                           QSizePolicy.Expanding)
         if key.tooltip:
             self.setToolTip(key.tooltip)
         self.clicked.connect(self._on_click)
@@ -45,7 +45,8 @@ class KeyButton(QPushButton):
             return Key(
                 label=k.alt_label,
                 insert=k.alt_insert,
-                action=k.alt_action or ("insert" if k.alt_insert else ""),
+                action=k.alt_action
+                or ("insert" if k.alt_insert else ""),
                 tooltip=k.tooltip,
                 style=k.style,
                 span=k.span,
@@ -65,3 +66,6 @@ class KeyButton(QPushButton):
         if not eff.insert and not eff.action:
             return
         self.pressed_key.emit(eff)
+
+
+__all__ = ["KeyButton"]

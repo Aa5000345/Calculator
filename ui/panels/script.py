@@ -30,7 +30,8 @@ class ScriptPanel(CalcPanel):
         "b = 4\n"
         "sqrt(a^2 + b^2)\n"
         "\n"
-        "100 的 15%  # 支持百分比语法吗？ → 脚本中暂不支持，用 100 * 15 / 100\n"
+        "100 的 15%  # 脚本中暂不支持百分比语法，"
+        "请用 100 * 15 / 100\n"
         "100 * 15 / 100\n"
         "sin(pi / 6)\n"
         "factorial(5)\n"
@@ -42,17 +43,21 @@ class ScriptPanel(CalcPanel):
         self.editor = QPlainTextEdit()
         self.editor.setPlaceholderText(self.SAMPLE)
         self.editor.setPlainText(self.SAMPLE)
+        self.primary_input = self.editor
 
-        self.run_btn = QPushButton(i18n.t("script_run", "运行全部"))
+        self.run_btn = QPushButton(
+            i18n.t("script_run", "运行全部"))
         self.run_btn.clicked.connect(self.run_script)
 
-        self.clear_btn = QPushButton(i18n.t("clear", "清空"))
+        self.clear_btn = QPushButton(
+            i18n.t("clear", "清空"))
         self.clear_btn.clicked.connect(self._clear)
 
         self.export_btn = QPushButton(
             i18n.t("script_export_csv", "导出结果 CSV"))
         self.export_btn.clicked.connect(self._export_csv)
 
+        # ---------------- 结果表 ----------------
         self.result_table = QTableWidget(0, 3)
         self.result_table.setHorizontalHeaderLabels([
             i18n.t("script_line", "行"),
@@ -63,26 +68,30 @@ class ScriptPanel(CalcPanel):
         hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.Stretch)
-        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.result_table.setSelectionBehavior(
+            QTableWidget.SelectRows)
 
         self.status = QLabel("")
         self.status.setStyleSheet("color: #888;")
 
         row = QHBoxLayout()
-        for b in (self.run_btn, self.clear_btn, self.export_btn):
+        for b in (self.run_btn, self.clear_btn,
+                  self.export_btn):
             row.addWidget(b)
         row.addStretch(1)
 
         top = QWidget()
         tv = QVBoxLayout(top)
         tv.setContentsMargins(0, 0, 0, 0)
-        tv.addWidget(QLabel(i18n.t("script_source", "脚本源码")))
+        tv.addWidget(QLabel(
+            i18n.t("script_source", "脚本源码")))
         tv.addWidget(self.editor, 1)
 
         bottom = QWidget()
         bv = QVBoxLayout(bottom)
         bv.setContentsMargins(0, 0, 0, 0)
-        bv.addWidget(QLabel(i18n.t("script_results", "结果")))
+        bv.addWidget(QLabel(
+            i18n.t("script_results", "结果")))
         bv.addWidget(self.result_table, 1)
 
         splitter = QSplitter(Qt.Vertical)
@@ -96,11 +105,12 @@ class ScriptPanel(CalcPanel):
         main.addLayout(row)
         main.addWidget(self.status)
 
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _angle_mode(self) -> str:
         try:
-            return self.settings.get("angle_mode", "RAD") or "RAD"
+            return self.settings.get(
+                "angle_mode", "RAD") or "RAD"
         except Exception:
             return "RAD"
 
@@ -130,16 +140,19 @@ class ScriptPanel(CalcPanel):
                 self._add_row(lineno, s, out)
                 n_ok += 1
             except Exception as e:
-                msg = friendly_error(self.i18n, e, "script")
+                msg = friendly_error(
+                    self.i18n, e, "script")
                 self._add_row(lineno, s, f"⚠ {msg}")
                 n_err += 1
 
         tmpl = self.i18n.t(
             "script_done", "完成：成功 {ok}，失败 {err}")
         try:
-            self.status.setText(tmpl.format(ok=n_ok, err=n_err))
+            self.status.setText(
+                tmpl.format(ok=n_ok, err=n_err))
         except Exception:
-            self.status.setText(f"完成：成功 {n_ok}，失败 {n_err}")
+            self.status.setText(
+                f"完成：成功 {n_ok}，失败 {n_err}")
 
         try:
             self.add_history(
@@ -151,9 +164,12 @@ class ScriptPanel(CalcPanel):
     def _add_row(self, lineno, expr, result):
         r = self.result_table.rowCount()
         self.result_table.insertRow(r)
-        self.result_table.setItem(r, 0, QTableWidgetItem(str(lineno)))
-        self.result_table.setItem(r, 1, QTableWidgetItem(expr))
-        self.result_table.setItem(r, 2, QTableWidgetItem(result))
+        self.result_table.setItem(
+            r, 0, QTableWidgetItem(str(lineno)))
+        self.result_table.setItem(
+            r, 1, QTableWidgetItem(expr))
+        self.result_table.setItem(
+            r, 2, QTableWidgetItem(result))
 
     def _clear(self):
         self.result_table.setRowCount(0)
@@ -163,11 +179,13 @@ class ScriptPanel(CalcPanel):
         if self.result_table.rowCount() == 0:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV", "script_results.csv", "CSV (*.csv)")
+            self, "Export CSV", "script_results.csv",
+            "CSV (*.csv)")
         if not path:
             return
         try:
-            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            with open(path, "w", encoding="utf-8-sig",
+                      newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["line", "expr", "result"])
                 for r in range(self.result_table.rowCount()):
@@ -180,3 +198,6 @@ class ScriptPanel(CalcPanel):
         except Exception as e:
             log_exc(e, module="ScriptPanel._export_csv")
             QMessageBox.warning(self, "Error", str(e))
+
+
+__all__ = ["ScriptPanel"]

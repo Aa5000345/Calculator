@@ -1,17 +1,11 @@
-"""剪贴板历史：监听系统剪贴板、可搜索、可固定、可智能识别表达式。
-
-智能识别（可选）：
-- 通过 core.clipboard_monitor 轮询剪贴板
-- 识别到像表达式的内容时，发出 expr_detected 信号
-- 面板把该信号转发到全局总线 clipboard_expr
-- MainWindow 收到后弹 toast（点击 → 送往基础面板）
-"""
+"""剪贴板历史：监听系统剪贴板、可搜索、可固定、可智能识别表达式。"""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QVBoxLayout, QHBoxLayout, QAbstractItemView, QCheckBox,
+    QApplication, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QPushButton, QVBoxLayout, QHBoxLayout,
+    QAbstractItemView, QCheckBox,
 )
 
 from core import clipboard_monitor
@@ -23,21 +17,26 @@ class ClipboardHistoryPanel(CalcPanel):
 
     MAX = 200
 
-    # 识别到表达式时发出（供上层使用，也会转发到 bus().clipboard_expr）
     expr_detected = Signal(str)
 
     def __init__(self, settings, i18n, history):
         super().__init__(settings, i18n, history)
-        self._items: list[dict] = []
+        self._items: list = []
 
+        # ---------------- 搜索 ----------------
         self.search = QLineEdit()
-        self.search.setPlaceholderText(i18n.t("search", "搜索"))
+        self.search.setPlaceholderText(
+            i18n.t("search", "搜索"))
         self.search.textChanged.connect(self._refresh)
 
+        # ---------------- 列表 ----------------
         self.list = QListWidget()
-        self.list.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.list.itemDoubleClicked.connect(lambda _: self._copy_current())
+        self.list.setSelectionMode(
+            QAbstractItemView.SingleSelection)
+        self.list.itemDoubleClicked.connect(
+            lambda _: self._copy_current())
 
+        # ---------------- 按钮 ----------------
         b_copy = QPushButton(i18n.t("copy", "复制"))
         b_pin = QPushButton(i18n.t("pin", "固定"))
         b_clear = QPushButton(i18n.t("clear", "清空"))
@@ -45,20 +44,25 @@ class ClipboardHistoryPanel(CalcPanel):
         b_pin.clicked.connect(self._toggle_pin)
         b_clear.clicked.connect(self._clear)
 
-        # 智能识别开关
+        # ---------------- 智能识别开关 ----------------
         self.smart_detect = QCheckBox(
-            i18n.t("clipboard_smart_detect", "智能识别表达式"))
+            i18n.t("clipboard_smart_detect",
+                   "智能识别表达式"))
         self.smart_detect.setChecked(
-            bool(settings.get("clipboard_smart_detect", False)))
-        self.smart_detect.stateChanged.connect(self._on_smart_toggle)
+            bool(settings.get("clipboard_smart_detect",
+                              False)))
+        self.smart_detect.stateChanged.connect(
+            self._on_smart_toggle)
 
         self.smart_toast = QCheckBox(
-            i18n.t("clipboard_smart_toast", "识别后弹提示"))
+            i18n.t("clipboard_smart_toast",
+                   "识别后弹提示"))
         self.smart_toast.setChecked(
             bool(settings.get("clipboard_smart_toast", True)))
         self.smart_toast.stateChanged.connect(
-            lambda _: settings.set("clipboard_smart_toast",
-                                   self.smart_toast.isChecked()))
+            lambda _: settings.set(
+                "clipboard_smart_toast",
+                self.smart_toast.isChecked()))
 
         row = QHBoxLayout()
         for b in (b_copy, b_pin, b_clear):
@@ -76,10 +80,10 @@ class ClipboardHistoryPanel(CalcPanel):
         main.addWidget(self.list, 1)
         main.addLayout(row)
 
-        # 内部信号 → bus 转发
+        # ---------------- 内部信号 → bus 转发 ----------------
         self.expr_detected.connect(self._forward_to_bus)
 
-        # 智能识别监听器
+        # ---------------- 剪贴板监听 ----------------
         self._monitor = clipboard_monitor.ClipboardMonitor(self)
 
         cb = QApplication.clipboard()
@@ -87,11 +91,10 @@ class ClipboardHistoryPanel(CalcPanel):
         self._last_text = ""
         self._refresh()
 
-        # 根据开关状态决定是否立即启动识别
         if self.smart_detect.isChecked():
             QTimer.singleShot(0, self._start_monitor)
 
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _forward_to_bus(self, text):
         try:
@@ -102,7 +105,8 @@ class ClipboardHistoryPanel(CalcPanel):
 
     def _on_smart_toggle(self, state):
         try:
-            self.settings.set("clipboard_smart_detect", bool(state))
+            self.settings.set(
+                "clipboard_smart_detect", bool(state))
         except Exception:
             pass
         if state:
@@ -123,7 +127,6 @@ class ClipboardHistoryPanel(CalcPanel):
             pass
 
     def _on_expr_detected(self, text):
-        """剪贴板监听器识别到表达式 → 发内部信号。"""
         if not self.smart_detect.isChecked():
             return
         try:
@@ -138,7 +141,7 @@ class ClipboardHistoryPanel(CalcPanel):
             pass
         super().closeEvent(e)
 
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _on_clipboard(self):
         try:
@@ -151,7 +154,8 @@ class ClipboardHistoryPanel(CalcPanel):
         self._items.insert(0, {"text": t, "pinned": False})
         if len(self._items) > self.MAX:
             keep = [x for x in self._items if x["pinned"]]
-            others = [x for x in self._items if not x["pinned"]]
+            others = [x for x in self._items
+                      if not x["pinned"]]
             others = others[: self.MAX - len(keep)]
             self._items = keep + others
         self._refresh()
@@ -177,7 +181,8 @@ class ClipboardHistoryPanel(CalcPanel):
         i = self._current_index()
         if i is None:
             return
-        QApplication.clipboard().setText(self._items[i]["text"])
+        QApplication.clipboard().setText(
+            self._items[i]["text"])
         self._last_text = self._items[i]["text"]
 
     def _toggle_pin(self):
@@ -190,3 +195,6 @@ class ClipboardHistoryPanel(CalcPanel):
     def _clear(self):
         self._items = [x for x in self._items if x["pinned"]]
         self._refresh()
+
+
+__all__ = ["ClipboardHistoryPanel"]

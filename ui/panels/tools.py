@@ -28,8 +28,10 @@ class ToolsPanel(CalcPanel):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_qr_tab(), "QR")
         self.tabs.addTab(self._build_jwt_tab(), "JWT")
-        self.tabs.addTab(self._build_regex_tab(), i18n.t("regex", "正则"))
-        self.tabs.addTab(self._build_color_tab(), i18n.t("color", "颜色"))
+        self.tabs.addTab(self._build_regex_tab(),
+                         i18n.t("regex", "正则"))
+        self.tabs.addTab(self._build_color_tab(),
+                         i18n.t("color", "颜色"))
 
         main = QVBoxLayout(self)
         main.addWidget(self.tabs, 2)
@@ -44,10 +46,14 @@ class ToolsPanel(CalcPanel):
         v = QVBoxLayout(w)
         self.qr_input = QPlainTextEdit("https://example.com")
         self.qr_input.setFixedHeight(80)
+        self.primary_input = self.qr_input
+
         b_gen = QPushButton(self.i18n.t("generate", "生成"))
-        b_save = QPushButton(self.i18n.t("save_png", "保存 PNG"))
+        b_save = QPushButton(
+            self.i18n.t("save_png", "保存 PNG"))
         b_gen.clicked.connect(self._qr_generate)
         b_save.clicked.connect(self._qr_save)
+
         self.qr_preview = QLabel()
         self.qr_preview.setMinimumHeight(220)
         self.qr_preview.setAlignment(Qt.AlignCenter)
@@ -64,7 +70,8 @@ class ToolsPanel(CalcPanel):
 
     def _qr_generate(self):
         try:
-            data = tools.qrcode_pixmap_bytes(self.qr_input.toPlainText())
+            data = tools.qrcode_pixmap_bytes(
+                self.qr_input.toPlainText())
             pm = QPixmap()
             pm.loadFromData(data, "PNG")
             self.qr_preview.setPixmap(pm)
@@ -111,10 +118,13 @@ class ToolsPanel(CalcPanel):
 
     def _jwt_decode(self):
         try:
-            r = tools.jwt_decode(self.jwt_input.toPlainText())
-            s = json.dumps(r, ensure_ascii=False, indent=2, default=str)
+            r = tools.jwt_decode(
+                self.jwt_input.toPlainText())
+            s = json.dumps(r, ensure_ascii=False,
+                           indent=2, default=str)
             self.result.show_result(s, "")
-            self.add_history("jwt", s[:300], module="tools-jwt")
+            self.add_history("jwt", s[:300],
+                             module="tools-jwt")
         except Exception as e:
             self.result.show_error(e)
 
@@ -183,7 +193,8 @@ class ToolsPanel(CalcPanel):
         self.color_preview = QLabel()
         self.color_preview.setFixedHeight(60)
         self.color_preview.setStyleSheet(
-            "background:#007ACC;border:1px solid #888;border-radius:4px;")
+            "background:#007ACC;border:1px solid #888;"
+            "border-radius:4px;")
         self.color_other = QLineEdit("#FFFFFF")
         b1 = QPushButton(self.i18n.t("convert", "转换"))
         b2 = QPushButton(self.i18n.t("contrast", "对比度"))
@@ -191,7 +202,8 @@ class ToolsPanel(CalcPanel):
         b2.clicked.connect(self._color_contrast)
 
         form = QFormLayout()
-        form.addRow(QLabel(self.i18n.t("color", "颜色")), self.color_input)
+        form.addRow(QLabel(self.i18n.t("color", "颜色")),
+                    self.color_input)
         form.addRow(QLabel(""), self.color_preview)
         form.addRow(QLabel(self.i18n.t("other_color", "对比色")),
                     self.color_other)
@@ -217,16 +229,21 @@ class ToolsPanel(CalcPanel):
                 "hsl": list(r["hsl"]),
             }, ensure_ascii=False, indent=2)
             self.result.show_result(s, "")
-            self.add_history(self.color_input.text(), r["hex"],
-                             module="tools-color")
+            self.add_history(
+                self.color_input.text(), r["hex"],
+                module="tools-color")
         except Exception as e:
             self.result.show_error(e)
 
     def _color_contrast(self):
         try:
-            r = tools.color_contrast(self.color_input.text(),
-                                     self.color_other.text())
+            r = tools.color_contrast(
+                self.color_input.text(),
+                self.color_other.text())
             s = json.dumps(r, ensure_ascii=False, indent=2)
             self.result.show_result(s, "")
         except Exception as e:
             self.result.show_error(e)
+
+
+__all__ = ["ToolsPanel"]

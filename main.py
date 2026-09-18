@@ -1,8 +1,9 @@
-"""应用入口：CLI / URL 参数 / 全局异常钩子 + 高 DPI + 初始化 + 主窗口。
+"""应用入口：CLI / URL 参数 / 全局异常钩子 + 高 DPI + Splash + 初始化。
 
 设计：
 - CLI 解析放在最前面，走 CLI 路径时完全不加载 Qt / matplotlib
 - URL 参数（?expr=1+1）通过环境变量传给 MainWindow
+- Splash Screen 在导入 Qt / matplotlib 之后、MainWindow 构造之前显示
 """
 import os
 
@@ -13,6 +14,7 @@ import sys
 
 # CLI 模块只依赖标准库；提前导入不拖慢 GUI 启动
 from core import cli as _cli
+from core.cli import APP_VERSION as _APP_VERSION
 
 
 def main():
@@ -31,7 +33,8 @@ def main():
     matplotlib.use("QtAgg")
 
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtWidgets import QApplication, QSplashScreen
 
     from core import error_handler
     from core.settings import Settings
@@ -42,7 +45,7 @@ def main():
     # 3) 安装异常钩子（尽早，覆盖初始化阶段）
     error_handler.install()
 
-    # 4) 高 DPI（Qt6 已默认开启；这里只调整取整策略以获得更平滑缩放）
+    # 4) 高 DPI（Qt6 已默认开启；这里只调整取整策略获得更平滑缩放）
     try:
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -52,15 +55,33 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("MultiCalc")
     app.setOrganizationName("MultiCalc")
+    app.setApplicationVersion(_APP_VERSION)
 
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-    settings = Settings(
-        os.path.join(base_path, "config", "default_settings.json"))
+    # 5) Splash Screen —— 让用户在慢启动时看到反馈
+    splash = _show_splash(base_path, QPixmap, QSplashScreen, Qt)
+
+    # 6) 初始化
+    try:
+        settings = Settings(
+            os.path.join(base_path, "config", "default_settings.json"))
+    except Exception as e:
+        print(f"设置加载失败: {e}", file=sys.stderr)
+        if splash is not None:
+            try:
+                splash.close()
+            except Exception:
+                pass
+        sys.exit(3)
 
     from core import rates as rates_mod
-    rates_mod.init(base_path,
-                   plugin_dir=os.path.join(base_path, "plugins", "rates"))
+    try:
+        rates_mod.init(
+            base_path,
+            plugin_dir=os.path.join(base_path, "plugins", "rates"))
+    except Exception:
+        pass
 
     i18n = I18n(
         os.path.join(base_path, "config", "i18n"),
@@ -68,18 +89,63 @@ def main():
     )
     history = History()
 
+    # 7) 主窗口
     win = MainWindow(base_path, settings, i18n, history)
     win.show()
 
-    # 关闭时优雅退出
+    # 8) 关闭 splash
+    if splash is not None:
+        try:
+            splash.finish(win)
+        except Exception:
+            pass
+
+    # 9) 清理
     def _cleanup():
         try:
             history.close()
         except Exception:
             pass
+        try:
+            settings.flush()
+        except Exception:
+            pass
     app.aboutToQuit.connect(_cleanup)
 
     sys.exit(app.exec())
+
+
+def _show_splash(base_path, QPixmap, QSplashScreen, Qt):
+    """尝试显示启动画面。失败时返回 None。"""
+    try:
+        icon_path = os.path.join(base_path, "assets", "icon.ico")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(base_path, "assets", "icon.png")
+
+        if os.path.exists(icon_path):
+            pm = QPixmap(icon_path).scaled(
+                320, 320, Qt.KeepAspectRatio,
+                Qt.SmoothTransformation)
+            splash = QSplashScreen(pm)
+        else:
+            pm = QPixmap(320, 200)
+            pm.fill(Qt.darkGray)
+            splash = QSplashScreen(pm)
+
+        splash.show()
+        splash.showMessage(
+            "MultiCalc 正在启动…",
+            Qt.AlignBottom | Qt.AlignHCenter, Qt.white)
+
+        try:
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+        except Exception:
+            pass
+
+        return splash
+    except Exception:
+        return None
 
 
 if __name__ == "__main__":

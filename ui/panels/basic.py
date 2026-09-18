@@ -1,4 +1,14 @@
-"""基础计算面板：键盘驱动 + 百分比模板 + 内存槽 + 耗时显示 + 实时预览。"""
+"""基础计算面板：键盘驱动 + 百分比模板 + 内存槽 + 耗时显示 +
+实时预览 + 智能建议 + 输入历史 + LaTeX 检测 + 差异徽章。
+
+变更历史：
+- 第 1 轮：初版
+- 第 3 轮：primary_input / push_undo / Ctrl+Z
+- 第 6 轮：LaTeX 检测（looks_like_latex）
+- 第 9 轮：SuggestionBubble
+- 第 13 轮：InputHistoryButton
+- 第 17 轮：DiffBadge（在 ResultView 内部，自动生效）
+"""
 from __future__ import annotations
 
 import time
@@ -14,7 +24,9 @@ from core import engine
 from core.errors import InputError
 from core.logger import log_exc
 from ui.shortcuts import install_panel_shortcuts
-from ._common import _clear_layout, friendly_error, ResultView, InlinePreviewBar
+from ._common import (
+    _clear_layout, friendly_error, ResultView, InlinePreviewBar,
+)
 from .base import CalcPanel
 
 
@@ -40,31 +52,38 @@ class BasicPanel(CalcPanel):
         self.memory = 0.0
         self.mem_slots = {i: 0.0 for i in range(1, 10)}
 
+        # ---------------- 输入框 ----------------
         self.expr = _CalcLineEdit()
         self.expr.setText(settings.get_draft("basic_expr", ""))
         self.expr.textChanged.connect(
             lambda t: settings.set_draft("basic_expr", t))
         self.expr.returnPressed.connect(self.calc)
+        self.primary_input = self.expr
 
+        # ---------------- 结果格式化 ----------------
         self.fmt_mode = QComboBox()
         self.fmt_mode.addItem(i18n.t("fmt_auto", "Auto"), "auto")
         self.fmt_mode.addItem(i18n.t("fmt_number", "Number"), "number")
         self.fmt_mode.addItem(i18n.t("fmt_sci", "Scientific"), "sci")
-        self.fmt_mode.addItem(i18n.t("fmt_fraction", "Fraction"), "fraction")
-        self.fmt_mode.addItem(i18n.t("fmt_percent", "Percent"), "percent")
+        self.fmt_mode.addItem(
+            i18n.t("fmt_fraction", "Fraction"), "fraction")
+        self.fmt_mode.addItem(
+            i18n.t("fmt_percent", "Percent"), "percent")
         self.fmt_mode.setCurrentIndex(
             max(0, self.fmt_mode.findData(
                 settings.get("basic_fmt_mode", "auto"))))
         self.fmt_mode.currentIndexChanged.connect(
-            lambda _: settings.set("basic_fmt_mode",
-                                   self.fmt_mode.currentData()))
+            lambda _: settings.set(
+                "basic_fmt_mode", self.fmt_mode.currentData()))
 
+        # ---------------- 按钮区 ----------------
         self.btn_box = QWidget()
         self.grid = QGridLayout(self.btn_box)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(4)
         self.rebuild_buttons()
 
+        # ---------------- 内存槽 ----------------
         self.mem_box = QWidget()
         mrow = QHBoxLayout(self.mem_box)
         mrow.setContentsMargins(0, 0, 0, 0)
@@ -77,6 +96,7 @@ class BasicPanel(CalcPanel):
                 lambda pos, k=i: self._mem_store(k))
             mrow.addWidget(b)
 
+        # ---------------- 主按钮 ----------------
         self.calc_btn = QPushButton(i18n.t("calc"))
         self.calc_btn.setMinimumHeight(36)
         self.calc_btn.clicked.connect(self.calc)
@@ -88,25 +108,42 @@ class BasicPanel(CalcPanel):
         row.addWidget(self.calc_btn, 1)
         row.addWidget(self.cancel_btn)
 
+        # ---------------- 顶部工具栏 ----------------
         top = QHBoxLayout()
         top.addWidget(QLabel(i18n.t("expr")))
         top.addStretch(1)
         top.addWidget(self.make_kb_button())
+
+        # 输入历史按钮（第 13 轮）
+        try:
+            from ui.widgets.input_history_widget import (
+                InputHistoryButton,
+            )
+            self.history_btn = InputHistoryButton(
+                settings, i18n, "basic.expr", self)
+            self.history_btn.attach(self.expr)
+            top.addWidget(self.history_btn)
+        except Exception:
+            self.history_btn = None
+
         top.addWidget(self.fmt_mode)
 
+        # ---------------- 提示行 ----------------
         self.hint = QLabel("")
         self.hint.setStyleSheet("color: #888; padding-left: 2px;")
         self._update_hint()
 
-        # 实时预览条
+        # ---------------- 实时预览 ----------------
         self.preview = InlinePreviewBar(calc_fn=self._preview_calc)
         self.preview.attach(
             self.expr,
             enabled_getter=lambda: bool(
                 self.settings.get("inline_preview", True)))
 
+        # ---------------- 结果视图 ----------------
         self.result = ResultView(i18n)
 
+        # ---------------- 主布局 ----------------
         main = QVBoxLayout(self)
         main.addLayout(top)
         main.addWidget(self.expr)
@@ -121,11 +158,13 @@ class BasicPanel(CalcPanel):
         main.addWidget(QLabel(i18n.t("result")))
         main.addWidget(self.result, 1)
 
+        # ---------------- 快捷键 ----------------
         install_panel_shortcuts(
             self,
             on_calc=self.calc,
             on_cancel=self.cancel_current,
             on_clear=self._clear,
+            on_undo=self.undo,
             expr_widget=self.expr,
             history_getter=self._history_exprs,
         )
@@ -135,9 +174,33 @@ class BasicPanel(CalcPanel):
         sc.activated.connect(self._clear)
         self._esc_sc = sc
 
+        sc_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        sc_undo.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_undo.activated.connect(self.undo)
+        self._undo_sc = sc_undo
+
         self.expr.textChanged.connect(self._update_hint)
 
-    # ---------------- 角度 / 预览 ----------------
+        # ---------------- 智能建议（第 9 轮） ----------------
+        try:
+            from ui.widgets.suggestion_widget import (
+                SuggestionBubble,
+            )
+            self.suggest_bubble = SuggestionBubble(
+                settings, i18n, self)
+            self.suggest_bubble.attach(
+                self.expr,
+                module_key="basic",
+                history_getter=self._history_exprs)
+            self.suggest_bubble.suggestion_clicked.connect(
+                self._on_suggestion)
+        except Exception as e:
+            log_exc(e, module="BasicPanel.suggest_init")
+            self.suggest_bubble = None
+
+    # ==================================================================
+    # 角度 / 预览
+    # ==================================================================
 
     def _angle_mode(self) -> str:
         try:
@@ -147,15 +210,19 @@ class BasicPanel(CalcPanel):
 
     def _preview_calc(self, expr):
         try:
-            value, _desc = engine.basic_calc_smart(expr, self._angle_mode())
+            value, _desc = engine.basic_calc_smart(
+                expr, self._angle_mode())
             return value
         except Exception:
             return None
 
-    # ---------------- 内存槽 ----------------
+    # ==================================================================
+    # 内存槽
+    # ==================================================================
 
     def _mem_pick(self, k):
         try:
+            self.push_undo()
             self.expr.insert(str(self.mem_slots[k]))
         except Exception:
             pass
@@ -165,16 +232,23 @@ class BasicPanel(CalcPanel):
             v = self.current_result()
             self.mem_slots[k] = v
             self.result.text.appendPlainText(f"M{k} ← {v}")
+            try:
+                self.settings.set("memory", v, notify=True)
+            except Exception:
+                pass
         except Exception:
             pass
 
     def current_result(self):
         try:
-            return float(self.result.text.toPlainText().splitlines()[-1])
+            return float(
+                self.result.text.toPlainText().splitlines()[-1])
         except Exception:
             return 0.0
 
-    # ---------------- 按钮 ----------------
+    # ==================================================================
+    # 按钮
+    # ==================================================================
 
     def rebuild_buttons(self):
         _clear_layout(self.grid)
@@ -206,7 +280,11 @@ class BasicPanel(CalcPanel):
                 log_exc(e, module="BasicPanel.on_settings_changed")
 
     def on_button(self, t):
+        if t not in ("C", "=", "M+", "M-", "MR", "MC"):
+            self.push_undo()
+
         if t == "C":
+            self.push_undo()
             self.expr.clear()
             self.result.show_result("", "")
         elif t == "=":
@@ -214,13 +292,28 @@ class BasicPanel(CalcPanel):
         elif t == "M+":
             self.memory += self.current_result()
             self.result.text.appendPlainText(f"M+ {self.memory}")
+            try:
+                self.settings.set(
+                    "memory", self.memory, notify=True)
+            except Exception:
+                pass
         elif t == "M-":
             self.memory -= self.current_result()
             self.result.text.appendPlainText(f"M- {self.memory}")
+            try:
+                self.settings.set(
+                    "memory", self.memory, notify=True)
+            except Exception:
+                pass
         elif t == "MR":
+            self.push_undo()
             self.expr.insert(str(self.memory))
         elif t == "MC":
             self.memory = 0
+            try:
+                self.settings.set("memory", 0, notify=True)
+            except Exception:
+                pass
         elif t == "%":
             self.expr.insert("%")
         elif t == "%off":
@@ -247,7 +340,9 @@ class BasicPanel(CalcPanel):
         self.expr.setFocus()
         self.expr.selectAll()
 
-    # ---------------- 历史提示 ----------------
+    # ==================================================================
+    # 历史提示
+    # ==================================================================
 
     def _update_hint(self, *_):
         try:
@@ -255,8 +350,9 @@ class BasicPanel(CalcPanel):
             if not cur or len(cur) < 2:
                 self.hint.setText("")
                 return
-            rows = self.history.list(module="basic", search=cur,
-                                     limit=3, order="id DESC")
+            rows = self.history.list(
+                module="basic", search=cur, limit=3,
+                order="id DESC")
             matches = [r["expr"] for r in rows if r.get("expr")]
             if not matches:
                 self.hint.setText("")
@@ -267,17 +363,83 @@ class BasicPanel(CalcPanel):
         except Exception:
             self.hint.setText("")
 
-    # ---------------- 计算 ----------------
-
     def _history_exprs(self):
         try:
-            rows = self.history.list(module="basic", limit=50, order="id DESC")
+            rows = self.history.list(
+                module="basic", limit=50, order="id DESC")
             return [r["expr"] for r in rows if r.get("expr")]
         except Exception:
             return []
 
+    # ==================================================================
+    # 智能建议
+    # ==================================================================
+
+    def _on_suggestion(self, action: str, payload: dict):
+        try:
+            if action == "plot":
+                expr = payload.get("expr") or ""
+                self._send_to_plot(expr)
+            elif action == "convert":
+                self._send_to_unit(
+                    self.expr.text())
+            elif action == "send_unit":
+                self._send_to_unit(payload.get("text") or "")
+            elif action == "send_pipeline":
+                self._send_to_pipeline(
+                    payload.get("text") or "")
+            elif action == "recall":
+                expr = payload.get("expr") or ""
+                if expr:
+                    self.push_undo()
+                    self.expr.setText(expr)
+                    self.expr.setFocus()
+            elif action == "replace":
+                expr = payload.get("expr") or ""
+                if expr:
+                    self.push_undo()
+                    self.expr.setText(expr)
+                    self.expr.setFocus()
+        except Exception as e:
+            log_exc(e, module="BasicPanel._on_suggestion")
+
+    def _send_to_plot(self, expr: str):
+        try:
+            from ui.signals import bus
+            bus().send_to_plot.emit(expr)
+        except Exception:
+            pass
+
+    def _send_to_unit(self, text: str):
+        try:
+            from ui.signals import bus
+            bus().send_to_unit.emit(text)
+        except Exception:
+            pass
+
+    def _send_to_pipeline(self, text: str):
+        try:
+            mw = self.window()
+            switch = getattr(mw, "_switch_by_key_pub", None)
+            if callable(switch):
+                switch("pipeline")
+            panel = None
+            panels = getattr(mw, "_panels", {})
+            panel = panels.get("pipeline")
+            if panel is not None:
+                w = getattr(panel, "primary_input", None)
+                if w is not None and hasattr(w, "setText"):
+                    w.setText(str(text))
+        except Exception:
+            pass
+
+    # ==================================================================
+    # 清空 / 计算
+    # ==================================================================
+
     def _clear(self):
         try:
+            self.push_undo()
             self.expr.clear()
             self.result.show_result("", "")
         except Exception:
@@ -287,9 +449,23 @@ class BasicPanel(CalcPanel):
         expr = self.expr.text()
         if not expr.strip():
             self.result.show_error(
-                InputError("表达式为空", friendly_key="err_empty_expr"))
+                InputError("表达式为空",
+                           friendly_key="err_empty_expr"))
             return
-        self.result.show_result(self.i18n.t("running", "Running…"), "")
+
+        # LaTeX 检测（第 6 轮）
+        try:
+            from core import latex_parser as lp
+            if lp.looks_like_latex(expr):
+                r = lp.latex_to_expr(expr)
+                if r.ok and r.expr:
+                    self.expr.setText(r.expr)
+                    expr = r.expr
+        except Exception:
+            pass
+
+        self.result.show_result(
+            self.i18n.t("running", "Running…"), "")
         self._calc_start = time.time()
         angle = self._angle_mode()
         self.run(
@@ -307,13 +483,17 @@ class BasicPanel(CalcPanel):
             if mode == "auto":
                 text = raw_desc if raw_desc else str(value)
             elif mode == "number":
-                text = engine.format_result(value, "text", digits=6)
+                text = engine.format_result(
+                    value, "text", digits=6)
             elif mode == "sci":
-                text = engine.format_result(value, "text", digits=6, sci=True)
+                text = engine.format_result(
+                    value, "text", digits=6, sci=True)
             elif mode == "fraction":
-                text = engine.format_result(value, "text", fraction=True)
+                text = engine.format_result(
+                    value, "text", fraction=True)
             elif mode == "percent":
-                text = engine.format_result(value, "text", percent=True)
+                text = engine.format_result(
+                    value, "text", percent=True)
             else:
                 text = str(value)
         except Exception:
@@ -333,12 +513,24 @@ class BasicPanel(CalcPanel):
         self.add_history(self.expr.text(), text, module="basic")
         self._update_hint()
 
+        # 通知智能建议气泡最新结果
+        if getattr(self, "suggest_bubble", None) is not None:
+            try:
+                self.suggest_bubble.set_last_result(text)
+            except Exception:
+                pass
+
     def _on_fail(self, e):
         elapsed = None
         if self._calc_start is not None:
             elapsed = time.time() - self._calc_start
-        self.result.show_error(e, elapsed=elapsed, retry_cb=self.calc)
+        self.result.show_error(e, elapsed=elapsed,
+                               retry_cb=self.calc)
 
     def _on_cancel(self):
         self.result.show_result(
-            self.i18n.t("err_cancelled_task", "Calculation cancelled"), "")
+            self.i18n.t("err_cancelled_task",
+                        "Calculation cancelled"), "")
+
+
+__all__ = ["BasicPanel"]

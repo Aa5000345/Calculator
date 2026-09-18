@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizeGrip,
-    QVBoxLayout, QWidget,
+    QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton,
+    QSizeGrip, QVBoxLayout, QWidget,
 )
 
 from core.logger import log_exc
@@ -43,7 +43,8 @@ class _TitleBar(QWidget):
         layout.setSpacing(6)
 
         self.title = QLabel("🧮 基础")
-        self.title.setStyleSheet("font-size: 11pt; font-weight: bold;")
+        self.title.setStyleSheet(
+            "font-size: 11pt; font-weight: bold;")
 
         self.deg_btn = QPushButton("RAD")
         self.deg_btn.setFixedSize(48, 22)
@@ -79,8 +80,10 @@ class _TitleBar(QWidget):
             e.accept()
 
     def mouseMoveEvent(self, e):
-        if self._drag_pos is not None and e.buttons() & Qt.LeftButton:
-            self._parent.move(e.globalPosition().toPoint() - self._drag_pos)
+        if (self._drag_pos is not None
+                and e.buttons() & Qt.LeftButton):
+            self._parent.move(
+                e.globalPosition().toPoint() - self._drag_pos)
             e.accept()
 
     def mouseReleaseEvent(self, e):
@@ -114,12 +117,14 @@ class CalcKeyboard(QDialog):
             self._tracker = None
 
         self._second = False
-        self._angle_mode = settings.get("angle_mode", "RAD") or "RAD"
-        self._pinned = bool(settings.get("keyboard_pinned", True))
+        self._angle_mode = (
+            settings.get("angle_mode", "RAD") or "RAD")
+        self._pinned = bool(
+            settings.get("keyboard_pinned", True))
         self._module_key = "basic"
         self._layout = get_layout("basic")
         self._memory = 0.0
-        self._buttons: list[KeyButton] = []
+        self._buttons: list = []
 
         self._build()
         self._restore_geometry()
@@ -142,14 +147,18 @@ class CalcKeyboard(QDialog):
         mem_layout = QHBoxLayout(self._mem_bar)
         mem_layout.setContentsMargins(6, 0, 6, 4)
         mem_layout.setSpacing(4)
-        for label, action in (("MC", "mem_clear"), ("MR", "mem_recall"),
-                              ("M+", "mem_add"), ("M-", "mem_sub"),
+        for label, action in (("MC", "mem_clear"),
+                              ("MR", "mem_recall"),
+                              ("M+", "mem_add"),
+                              ("M-", "mem_sub"),
                               ("MS", "mem_store")):
             b = QPushButton(label)
             b.setFocusPolicy(Qt.NoFocus)
             b.setFixedHeight(24)
             b.setProperty("keyStyle", "fn")
-            b.clicked.connect(lambda _=False, a=action: self._do_memory(a))
+            b.clicked.connect(
+                lambda _=False, a=action:
+                self._do_memory(a))
             mem_layout.addWidget(b)
         mem_layout.addStretch(1)
 
@@ -192,7 +201,8 @@ class CalcKeyboard(QDialog):
                 col += span
 
         max_cols = max(
-            (sum(max(1, int(getattr(k, "span", 1) or 1)) for k in row)
+            (sum(max(1, int(getattr(k, "span", 1) or 1))
+                 for k in row)
              for row in rows),
             default=6,
         )
@@ -205,8 +215,9 @@ class CalcKeyboard(QDialog):
         geom = self.settings.get("keyboard_geometry")
         if isinstance(geom, (list, tuple)) and len(geom) == 4:
             try:
-                self.setGeometry(int(geom[0]), int(geom[1]),
-                                 int(geom[2]), int(geom[3]))
+                self.setGeometry(
+                    int(geom[0]), int(geom[1]),
+                    int(geom[2]), int(geom[3]))
                 return
             except Exception:
                 pass
@@ -268,20 +279,18 @@ class CalcKeyboard(QDialog):
             log_exc(e, module="CalcKeyboard._on_key")
 
     def _insert_with_cursor(self, text: str):
-        """智能插入：
-
-        - 若插入文本以 '(' 结尾，自动补 ')'，并把光标回退到括号中间。
-        - 其它情况直接插入。
-        """
+        """智能插入：`(` 结尾自动补 `)`，光标回退到中间。"""
         if not text:
             return
         try:
             if text.endswith("("):
                 self._tracker.insert_text(text + ")")
                 w = self._tracker.target()
-                if w is not None and hasattr(w, "cursorPosition") \
-                        and hasattr(w, "setCursorPosition"):
-                    w.setCursorPosition(max(0, w.cursorPosition() - 1))
+                if (w is not None
+                        and hasattr(w, "cursorPosition")
+                        and hasattr(w, "setCursorPosition")):
+                    w.setCursorPosition(
+                        max(0, w.cursorPosition() - 1))
                 return
             self._tracker.insert_text(text)
         except Exception as e:
@@ -301,12 +310,14 @@ class CalcKeyboard(QDialog):
             if hasattr(w, "text"):
                 cur = w.text()
                 pos = (w.cursorPosition()
-                       if hasattr(w, "cursorPosition") else len(cur))
+                       if hasattr(w, "cursorPosition")
+                       else len(cur))
             elif hasattr(w, "toPlainText"):
                 cur = w.toPlainText()
                 pos = len(cur)
 
-            if text.startswith(" ") and pos > 0 and cur[pos - 1] == " ":
+            if text.startswith(" ") and pos > 0 \
+                    and cur[pos - 1] == " ":
                 text = text[1:]
 
             if pos > 0 and cur and cur[pos - 1].isdigit():
@@ -373,7 +384,8 @@ class CalcKeyboard(QDialog):
     # ==================================================================
 
     def toggle_angle_mode(self):
-        self._angle_mode = "DEG" if self._angle_mode == "RAD" else "RAD"
+        self._angle_mode = (
+            "DEG" if self._angle_mode == "RAD" else "RAD")
         try:
             self.settings.set("angle_mode", self._angle_mode)
         except Exception:
@@ -412,7 +424,8 @@ class CalcKeyboard(QDialog):
         border = pal.get("border", "#3f3f46")
         hover = pal.get("hover", "#3a3d41")
         try:
-            family = self.settings.get("font_family", "Microsoft YaHei")
+            family = self.settings.get(
+                "font_family", "Microsoft YaHei")
         except Exception:
             family = "Microsoft YaHei"
 
@@ -470,17 +483,23 @@ class CalcKeyboard(QDialog):
     def closeEvent(self, e):
         try:
             g = self.geometry()
-            self.settings.set("keyboard_geometry",
-                              [g.x(), g.y(), g.width(), g.height()],
-                              notify=False)
-            self.settings.set("keyboard_visible", False, notify=False)
+            self.settings.set(
+                "keyboard_geometry",
+                [g.x(), g.y(), g.width(), g.height()],
+                notify=False)
+            self.settings.set(
+                "keyboard_visible", False, notify=False)
         except Exception:
             pass
         super().closeEvent(e)
 
     def showEvent(self, e):
         try:
-            self.settings.set("keyboard_visible", True, notify=False)
+            self.settings.set(
+                "keyboard_visible", True, notify=False)
         except Exception:
             pass
         super().showEvent(e)
+
+
+__all__ = ["CalcKeyboard"]

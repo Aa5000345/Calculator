@@ -1,18 +1,32 @@
 """面板共享工具：错误展示、异步执行、布局清理、统一 ResultView、
-InlinePreviewBar（实时预览）、内联校验辅助。"""
+InlinePreviewBar（实时预览）、内联校验辅助、差异徽章集成。
+
+变更历史：
+- 第 1 轮：初版
+- 第 2 轮：
+  - InlinePreviewBar 关键词改用 \b 词边界正则
+  - ResultView._show_context_menu 去掉重复 a_json 行
+  - 新增「在新分屏打开」菜单项
+- 第 3 轮：
+  - 集成错误分级（通过 core.errors）
+  - run_async 增强
+- 第 17 轮：
+  - ResultView 集成 DiffBadge，自动对比上次结果
+"""
 from __future__ import annotations
 
 import csv as _csv
 import io as _io
 import json as _json
+import re as _re
 
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QTimer,
 )
 from PySide6.QtWidgets import (
     QWidget, QPlainTextEdit, QPushButton, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QScrollArea, QMessageBox, QApplication, QLabel, QMenu,
-    QToolButton, QFrame, QGraphicsOpacityEffect,
+    QTabWidget, QScrollArea, QMessageBox, QApplication, QLabel,
+    QMenu, QToolButton, QFrame, QGraphicsOpacityEffect,
 )
 
 from core.errors import CalcError
@@ -39,6 +53,7 @@ def _clear_layout(layout):
 
 
 def friendly_error(i18n, exc, module="ui"):
+    """把异常转为用户级文案。"""
     try:
         log_exc(exc, module=module)
     except Exception:
@@ -59,9 +74,7 @@ def run_async(parent_widget, fn, *args,
 
     if cancel_btn is not None:
         cancel_btn.setEnabled(True)
-        # 记录当前 worker，供"取消"按钮回调使用
         cancel_btn._current_worker = w
-        # 只连接一次，避免每次 disconnect 产生的 C++ 层警告
         if not getattr(cancel_btn, "_cancel_connected", False):
             def _on_cancel_clicked(_btn=cancel_btn):
                 wk = getattr(_btn, "_current_worker", None)
@@ -140,20 +153,16 @@ def clear_field_error(widget):
 # 实时预览条
 # =====================================================================
 
-_SKIP_KEYWORDS = (
-    "integrate", "solve", "limit", "summation", "product",
-    "dsolve", "quad", "minimize", "linprog",
+# 使用词边界，避免 sin / cos 命中 integrate 这种误伤
+_SKIP_RE = _re.compile(
+    r"\b(integrate|solve|limit|dsolve|quad|minimize|linprog|"
+    r"summation|product|ode|dsolve)\b",
+    _re.IGNORECASE,
 )
 
 
 class InlinePreviewBar(QLabel):
-    """输入时显示实时预览的灰色小字。
-
-    - 300ms 防抖
-    - 表达式 > 40 字符或含昂贵关键字时跳过
-    - 求值异常静默失败（清空预览）
-    - 支持动态替换 calc_fn（set_calc_fn）
-    """
+    """输入时显示实时预览的灰色小字。"""
 
     def __init__(self, calc_fn=None, parent=None):
         super().__init__(parent)
@@ -161,7 +170,8 @@ class InlinePreviewBar(QLabel):
         self._enabled_getter = None
         self._pending = ""
 
-        self.setStyleSheet("color: #888; padding-left: 2px; font-size: 10pt;")
+        self.setStyleSheet(
+            "color: #888; padding-left: 2px; font-size: 10pt;")
         self.setMinimumHeight(18)
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
@@ -177,14 +187,8 @@ class InlinePreviewBar(QLabel):
         self._enabled_getter = enabled_getter
         line_edit.textChanged.connect(self._on_text)
 
-
     def refresh(self, text=None):
-        """外部触发预览刷新。
-
-        用于「多输入框联动」场景：当利率 / 年限 / 分布参数变化时，
-        由外部调用本方法重新触发预览计算。
-        text 为 None 时复用当前缓存值。
-        """
+        """外部触发预览刷新（多输入框联动场景）。"""
         if text is None:
             text = self._pending
         self._on_text(text)
@@ -201,11 +205,7 @@ class InlinePreviewBar(QLabel):
         s = (text or "").strip()
         if not s or len(s) > 40:
             return False
-        low = s.lower()
-        for kw in _SKIP_KEYWORDS:
-            if kw in low:
-                return False
-        return True
+        return _SKIP_RE.search(s) is None
 
     def _do_preview(self):
         try:
@@ -251,7 +251,9 @@ class CollapsibleGroup(QFrame):
         self._btn.setChecked(False)
         self._btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._btn.setArrowType(Qt.RightArrow)
-        self._btn.setStyleSheet("QToolButton{border:none;padding:2px;}")
+        self._btn.setStyleSheet(
+            "QToolButton{border:none;padding:2px;}")
+        self._btn.toggled.connect(self._toggle)
 
         self.body = QWidget()
         self.body_layout = QVBoxLayout(self.body)
@@ -263,11 +265,10 @@ class CollapsibleGroup(QFrame):
         lay.addWidget(self._btn)
         lay.addWidget(self.body)
 
-        self._btn.toggled.connect(self._toggle)
-
     def _toggle(self, checked):
         self.body.setVisible(checked)
-        self._btn.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+        self._btn.setArrowType(
+            Qt.DownArrow if checked else Qt.RightArrow)
 
     def add_widget(self, w):
         self.body_layout.addWidget(w)
@@ -285,7 +286,14 @@ class CollapsibleGroup(QFrame):
 # =====================================================================
 
 class ResultView(QWidget):
-    """统一结果查看器。"""
+    """统一结果查看器。
+
+    - 文本 + LaTeX + 步骤三个 Tab
+    - 错误卡片（含重试）
+    - 耗时显示
+    - 右键菜单（复制 / 发送 / 分屏）
+    - 差异徽章（对比上次结果）
+    """
 
     elapsed_changed = Signal(float)
 
@@ -298,6 +306,7 @@ class ResultView(QWidget):
         self._last_retry = None
         self._anim = None
         self._flash_overlay = None
+        self._prev_text = ""     # 用于差异对比
 
         # ---- 主文本 + LaTeX ----
         self.text = QPlainTextEdit()
@@ -318,9 +327,17 @@ class ResultView(QWidget):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.text, i18n.t("plain_text", "Plain"))
-        self.tabs.addTab(latex_scroll, i18n.t("latex_preview", "LaTeX"))
-        self.tabs.addTab(self.steps_scroll, i18n.t("steps", "步骤"))
-        self._steps_tab_index = 2
+        self.tabs.addTab(latex_scroll,
+                         i18n.t("latex_preview", "LaTeX"))
+        self.tabs.addTab(self.steps_scroll,
+                         i18n.t("steps", "步骤"))
+
+        # ---- 差异徽章（第 17 轮新增） ----
+        try:
+            from ui.widgets.diff_badge import DiffBadge
+            self.diff_badge = DiffBadge(i18n)
+        except Exception:
+            self.diff_badge = None
 
         # ---- 错误卡片 ----
         self.error_card = QFrame()
@@ -331,8 +348,10 @@ class ResultView(QWidget):
         self.error_label.setWordWrap(True)
         ec.addWidget(self.error_label, 1)
 
-        self.btn_copy_err = QPushButton(i18n.t("copy_error", "复制详情"))
-        self.btn_view_log = QPushButton(i18n.t("view_log", "查看日志"))
+        self.btn_copy_err = QPushButton(
+            i18n.t("copy_error", "复制详情"))
+        self.btn_view_log = QPushButton(
+            i18n.t("view_log", "查看日志"))
         self.btn_retry = QPushButton(i18n.t("retry", "重试"))
         ec.addWidget(self.btn_copy_err)
         ec.addWidget(self.btn_view_log)
@@ -342,13 +361,16 @@ class ResultView(QWidget):
         self.btn_view_log.clicked.connect(self._view_log)
         self.btn_retry.clicked.connect(self._retry)
 
-        # ---- 耗时 ----
+        # ---- 耗时 + 徽章行 ----
         self.elapsed_label = QLabel("")
         self.elapsed_label.setStyleSheet("color: #888;")
         row = QHBoxLayout()
         row.addWidget(self.elapsed_label)
+        if self.diff_badge is not None:
+            row.addWidget(self.diff_badge)
         row.addStretch(1)
 
+        # ---- 布局 ----
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.tabs, 1)
@@ -358,12 +380,17 @@ class ResultView(QWidget):
         # ---- 右键菜单 ----
         for w in (self.text, self.latex):
             w.setContextMenuPolicy(Qt.CustomContextMenu)
-            w.customContextMenuRequested.connect(self._show_context_menu)
+            w.customContextMenuRequested.connect(
+                self._show_context_menu)
 
     # ------------------------------------------------------------------
 
     def show_result(self, text, latex="", steps=None, elapsed=None,
                     highlight=True):
+        # 记录上一次的文本（用于差异）
+        if self._last_text:
+            self._prev_text = self._last_text
+
         self._last_text = text or ""
         self._last_latex = latex or ""
         self._last_error = ""
@@ -377,6 +404,17 @@ class ResultView(QWidget):
 
         if elapsed is not None:
             self._set_elapsed(elapsed)
+
+        # 差异徽章
+        if self.diff_badge is not None:
+            try:
+                if self._prev_text and self._last_text:
+                    self.diff_badge.update_from(
+                        self._prev_text, self._last_text)
+                else:
+                    self.diff_badge.clear()
+            except Exception:
+                self.diff_badge.clear()
 
         if highlight:
             self._flash()
@@ -399,8 +437,22 @@ class ResultView(QWidget):
         if elapsed is not None:
             self._set_elapsed(elapsed)
 
+        # 错误时清空差异徽章
+        if self.diff_badge is not None:
+            self.diff_badge.clear()
+
     def set_color(self, color):
         self.latex.set_color(color)
+
+    def clear_diff_badge(self):
+        if self.diff_badge is not None:
+            self.diff_badge.clear()
+
+    def reset_history(self):
+        """清空差异对比基准（例如切换面板时）。"""
+        self._prev_text = ""
+        if self.diff_badge is not None:
+            self.diff_badge.clear()
 
     # ------------------------------------------------------------------
 
@@ -422,7 +474,7 @@ class ResultView(QWidget):
             self.elapsed_label.setText("")
 
     def _flash(self):
-        """用临时叠加层做高亮动画 —— 不改动 styleSheet，避免覆盖主题。"""
+        """用临时叠加层做高亮动画 —— 不改动 styleSheet。"""
         try:
             from PySide6.QtGui import QColor
 
@@ -438,11 +490,13 @@ class ResultView(QWidget):
                 return
 
             overlay = QFrame(vp)
-            overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            overlay.setAttribute(
+                Qt.WA_TransparentForMouseEvents, True)
             overlay.setFrameShape(QFrame.NoFrame)
             bg = self.text.palette().base().color()
             hi = QColor(bg).lighter(130).name()
-            overlay.setStyleSheet(f"background-color: {hi};")
+            overlay.setStyleSheet(
+                f"background-color: {hi};")
             overlay.setGeometry(vp.rect())
             overlay.show()
             overlay.raise_()
@@ -469,34 +523,45 @@ class ResultView(QWidget):
             anim.start(QPropertyAnimation.DeleteWhenStopped)
             self._anim = anim
             self._flash_overlay = overlay
-
-            # 保险：动画未触发 finished 也强制清理
             QTimer.singleShot(900, _cleanup)
         except Exception:
             pass
 
     # ------------------------------------------------------------------
-    # 复制 / 发送菜单
+    # 右键菜单
     # ------------------------------------------------------------------
 
     def _show_context_menu(self, pos):
         i18n = self.i18n
         menu = QMenu(self)
-        a_text = menu.addAction(i18n.t("copy_as_text", "复制为文本"))
-        a_latex = menu.addAction(i18n.t("copy_as_latex", "复制为 LaTeX"))
-        a_json = menu.addAction(i18n.t("copy_as_json", "复制为 JSON"))
-        a_json = menu.addAction(i18n.t("copy_as_json", "复制为 JSON"))
-        a_csv = menu.addAction(i18n.t("copy_as_csv", "复制为 CSV"))
-        a_md = menu.addAction(i18n.t("copy_as_markdown", "复制为 Markdown"))
-        a_card = menu.addAction(i18n.t("share_card", "分享卡片 (PNG)…"))
+        a_text = menu.addAction(
+            i18n.t("copy_as_text", "复制为文本"))
+        a_latex = menu.addAction(
+            i18n.t("copy_as_latex", "复制为 LaTeX"))
+        a_json = menu.addAction(
+            i18n.t("copy_as_json", "复制为 JSON"))
+        a_csv = menu.addAction(
+            i18n.t("copy_as_csv", "复制为 CSV"))
+        a_md = menu.addAction(
+            i18n.t("copy_as_markdown", "复制为 Markdown"))
+        a_card = menu.addAction(
+            i18n.t("share_card", "分享卡片 (PNG)…"))
         menu.addSeparator()
 
         send_menu = menu.addMenu(i18n.t("send_to", "发送到…"))
-        a_send_unit = send_menu.addAction(i18n.t("send_to_unit", "单位面板"))
-        a_send_sci = send_menu.addAction(i18n.t("send_to_sci", "科学计算"))
-        a_send_table = send_menu.addAction(i18n.t("send_to_table", "数据表（新行）"))
-        a_send_snippet = send_menu.addAction(i18n.t("send_to_snippet", "保存为片段"))
-        a_send_plot = send_menu.addAction(i18n.t("send_to_plot", "绘图面板"))
+        a_send_unit = send_menu.addAction(
+            i18n.t("send_to_unit", "单位面板"))
+        a_send_sci = send_menu.addAction(
+            i18n.t("send_to_sci", "科学计算"))
+        a_send_table = send_menu.addAction(
+            i18n.t("send_to_table", "数据表（新行）"))
+        a_send_snippet = send_menu.addAction(
+            i18n.t("send_to_snippet", "保存为片段"))
+        a_send_plot = send_menu.addAction(
+            i18n.t("send_to_plot", "绘图面板"))
+        # 第 2 轮新增：在新分屏打开
+        a_split = send_menu.addAction(
+            i18n.t("open_in_split", "在新分屏打开"))
 
         chosen = menu.exec(self.text.mapToGlobal(pos))
         if chosen is None:
@@ -514,7 +579,8 @@ class ResultView(QWidget):
                     "error": self._last_error or None,
                 }
                 QApplication.clipboard().setText(
-                    _json.dumps(payload, ensure_ascii=False, indent=2))
+                    _json.dumps(payload, ensure_ascii=False,
+                                indent=2))
             elif chosen is a_csv:
                 buf = _io.StringIO()
                 w = _csv.writer(buf)
@@ -542,9 +608,23 @@ class ResultView(QWidget):
             elif chosen is a_send_plot:
                 from ui.signals import bus
                 bus().send_to_plot.emit(self._last_text)
+            elif chosen is a_split:
+                self._open_in_split()
         except Exception as e:
             log_exc(e, module="ResultView._show_context_menu")
 
+    def _open_in_split(self):
+        """把当前结果作为表达式发送到科学面板，并在分屏打开。"""
+        try:
+            from ui.signals import bus
+            w = self.window()
+            opener = getattr(w, "open_current_in_split", None)
+            if callable(opener):
+                opener()
+            if self._last_text:
+                bus().send_to_sci.emit(self._last_text)
+        except Exception as e:
+            log_exc(e, module="ResultView._open_in_split")
 
     def _copy_as_markdown(self):
         try:
@@ -571,8 +651,8 @@ class ResultView(QWidget):
             log_exc(e, module="ResultView._save_share_card.import")
             return
 
-        # 默认文件名
-        ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = __import__("datetime").datetime.now().strftime(
+            "%Y%m%d_%H%M%S")
         default_name = f"multicalc_{ts}.png"
         path, _ = QFileDialog.getSaveFileName(
             self, self.i18n.t("share_card", "分享卡片"),
@@ -580,12 +660,10 @@ class ResultView(QWidget):
         if not path:
             return
 
-        # 二维码内容：优先 LaTeX，其次原始结果
         qr_data = (self._last_latex or self._last_text or "").strip()
-        if len(qr_data) > 180:      # 太长二维码会很密
+        if len(qr_data) > 180:
             qr_data = qr_data[:180]
 
-        # 表达式：用结果第一行的前缀做一个猜测；取不到就留空
         expr = ""
         try:
             lines = (self._last_text or "").splitlines()
@@ -595,12 +673,6 @@ class ResultView(QWidget):
             expr = ""
 
         try:
-            theme = "dark"
-            try:
-                if self.i18n.lang.startswith("en"):
-                    theme = "dark"
-            except Exception:
-                pass
             sc_mod.render_share_card(
                 expr=expr,
                 result=self._last_text or "",
@@ -608,7 +680,7 @@ class ResultView(QWidget):
                 title="MultiCalc",
                 out_path=path,
                 qr_data=qr_data or None,
-                theme=theme,
+                theme="dark",
             )
             try:
                 from ui.toast import toast
@@ -641,3 +713,15 @@ class ResultView(QWidget):
             self._last_retry()
         except Exception as e:
             log_exc(e, module="ResultView._retry")
+
+
+__all__ = [
+    "_clear_layout",
+    "friendly_error",
+    "run_async",
+    "mark_field_error",
+    "clear_field_error",
+    "InlinePreviewBar",
+    "CollapsibleGroup",
+    "ResultView",
+]

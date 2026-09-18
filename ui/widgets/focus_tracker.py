@@ -1,6 +1,6 @@
 """应用级焦点追踪：让浮动键盘知道往哪个输入控件插入文本。
 
-设计要点：
+设计：
 - 单例：`FocusTracker.instance()`，随应用生命周期存续。
 - 忽略键盘自身的输入控件（通过 window().objectName()）。
 - 目标控件被销毁时（RuntimeError）自动清空引用。
@@ -41,10 +41,10 @@ class FocusTracker(QObject):
     def _on_focus_changed(self, old, new):
         if new is None:
             return
-        # 忽略键盘自身
         try:
             win = new.window()
-            if win is not None and win.objectName() == _KEYBOARD_OBJECT_NAME:
+            if (win is not None
+                    and win.objectName() == _KEYBOARD_OBJECT_NAME):
                 return
         except Exception:
             pass
@@ -66,7 +66,6 @@ class FocusTracker(QObject):
                 return True
         except Exception:
             pass
-        # 兜底：有 insert + isReadOnly 的控件
         if hasattr(w, "insert") and hasattr(w, "isReadOnly"):
             try:
                 return not w.isReadOnly()
@@ -92,7 +91,7 @@ class FocusTracker(QObject):
         if w is None:
             return None
         try:
-            w.objectName()  # 探测是否已被销毁
+            w.objectName()
         except RuntimeError:
             self._target = None
             return None
@@ -166,3 +165,6 @@ class FocusTracker(QObject):
         except Exception:
             pass
         return ""
+
+
+__all__ = ["FocusTracker"]

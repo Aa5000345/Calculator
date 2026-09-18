@@ -1,4 +1,12 @@
-"""科学计算 / 微积分面板：变量 / ODE / 数值积分 / 优化 + 实时预览。"""
+"""科学计算 / 微积分面板：变量 / ODE / 数值积分 / 优化 + 实时预览。
+
+变更历史：
+- 第 3 轮：primary_input / Ctrl+Z / push_undo
+- 第 6 轮：LaTeX 检测（looks_like_latex）
+- 第 9 轮：SuggestionBubble
+- 第 13 轮：InputHistoryButton
+- 第 17 轮：DiffBadge（在 ResultView 内部自动生效）
+"""
 from __future__ import annotations
 
 import re
@@ -7,11 +15,12 @@ import time
 import sympy as sp
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
     QHBoxLayout, QComboBox, QCheckBox, QSpinBox, QFormLayout,
-    QInputDialog, QTabWidget, QWidget, QTableWidget, QTableWidgetItem,
-    QHeaderView,
+    QInputDialog, QTabWidget, QWidget, QTableWidget,
+    QTableWidgetItem, QHeaderView,
 )
 
 from core import engine
@@ -19,7 +28,9 @@ from core import constants as const_mod
 from core import symbols as sym_mod
 from core.logger import log_exc
 from ui.shortcuts import install_panel_shortcuts
-from ._common import ResultView, friendly_error, InlinePreviewBar
+from ._common import (
+    ResultView, friendly_error, InlinePreviewBar,
+)
 from .base import CalcPanel
 
 
@@ -50,10 +61,10 @@ class ScientificPanel(CalcPanel):
     }
 
     OPS = [
-        "calc", "complex", "simplify", "expand", "factor", "apart",
-        "trigsimp", "solve", "solve_ineq", "solve_system",
-        "diff", "integrate", "quad", "limit", "series",
-        "summation", "product",
+        "calc", "complex", "simplify", "expand", "factor",
+        "apart", "trigsimp", "solve", "solve_ineq",
+        "solve_system", "diff", "integrate", "quad", "limit",
+        "series", "summation", "product",
         "dsolve", "minimize", "linprog",
     ]
 
@@ -61,22 +72,28 @@ class ScientificPanel(CalcPanel):
         super().__init__(settings, i18n, history)
         self._calc_start = None
 
+        # ---------------- 操作 ----------------
         self.op = QComboBox()
         for key in self.OPS:
             self.op.addItem(i18n.t(f"op_{key}", key), key)
         self.op.currentIndexChanged.connect(self._update_params)
 
+        # ---------------- 输入框 ----------------
         self.expr = QLineEdit(
             settings.get_draft("sci_expr", "sin(x)*exp(-x)"))
         self.expr.textChanged.connect(
             lambda t: settings.set_draft("sci_expr", t))
         self.expr.returnPressed.connect(self.calc)
         self.expr_label = QLabel(i18n.t("expr"))
+        self.primary_input = self.expr
 
-        self.const_btn = QPushButton(i18n.t("constants", "Constants…"))
+        # ---------------- 常数 ----------------
+        self.const_btn = QPushButton(
+            i18n.t("constants", "Constants…"))
         self.const_btn.setFixedHeight(24)
         self.const_btn.clicked.connect(self._pick_constant)
 
+        # ---------------- 参数 ----------------
         self.var = QLineEdit("x")
         self.vars = QLineEdit("x, y")
         self.equations = QPlainTextEdit("x + y = 3\nx - y = 1")
@@ -102,24 +119,40 @@ class ScientificPanel(CalcPanel):
         self.ics.setPlaceholderText("y(0)=1, y(1)=2")
         self.x0 = QLineEdit("0")
         self.opt_method = QComboBox()
-        for m in ("BFGS", "Nelder-Mead", "Powell", "CG", "L-BFGS-B",
-                  "TNC", "COBYLA"):
+        for m in ("BFGS", "Nelder-Mead", "Powell", "CG",
+                  "L-BFGS-B", "TNC", "COBYLA"):
             self.opt_method.addItem(m, m)
         self.lp_params = QPlainTextEdit(
             '{"c":[1,2],"A_ub":[[1,1],[1,-1]],"b_ub":[10,2]}')
         self.lp_params.setFixedHeight(90)
 
-        self.show_steps = QCheckBox(i18n.t("show_steps", "Show steps"))
+        self.show_steps = QCheckBox(
+            i18n.t("show_steps", "Show steps"))
 
         self.fmt = QComboBox()
         self.fmt.addItems(["text", "unicode", "latex"])
-        self.fmt.setCurrentText(settings.get("result_format", "text"))
+        self.fmt.setCurrentText(
+            settings.get("result_format", "text"))
 
+        # ---------------- 表单 ----------------
         self.form = QFormLayout()
         self.form.setLabelAlignment(Qt.AlignRight)
 
         head = QHBoxLayout()
         head.addWidget(self.expr, 1)
+
+        # 输入历史按钮（第 13 轮）
+        try:
+            from ui.widgets.input_history_widget import (
+                InputHistoryButton,
+            )
+            self.history_btn = InputHistoryButton(
+                settings, i18n, "scientific.expr", self)
+            self.history_btn.attach(self.expr)
+            head.addWidget(self.history_btn)
+        except Exception:
+            self.history_btn = None
+
         head.addWidget(self.const_btn)
         self.form.addRow(self.expr_label, head)
         head.addWidget(self.make_kb_button())
@@ -127,31 +160,41 @@ class ScientificPanel(CalcPanel):
 
         self._rows = {}
         self._add_row("var", QLabel(i18n.t("variable")), self.var)
-        self._add_row("vars", QLabel(i18n.t("vars", "Variables")), self.vars)
+        self._add_row("vars", QLabel(i18n.t("vars", "Variables")),
+                      self.vars)
         self._add_row("equations",
-                      QLabel(i18n.t("equations", "Equations")), self.equations)
-        self._add_row("order", QLabel(i18n.t("order", "Order")), self.order)
+                      QLabel(i18n.t("equations", "Equations")),
+                      self.equations)
+        self._add_row("order",
+                      QLabel(i18n.t("order", "Order")), self.order)
         self._add_row("lower", QLabel(i18n.t("lower")), self.lower)
         self._add_row("upper", QLabel(i18n.t("upper")), self.upper)
         self._add_row("point", QLabel(i18n.t("point")), self.point)
         self._add_row("direction",
-                      QLabel(i18n.t("direction", "Direction")), self.direction)
+                      QLabel(i18n.t("direction", "Direction")),
+                      self.direction)
         self._add_row("series_kind",
-                      QLabel(i18n.t("series_kind", "Series")), self.series_kind)
+                      QLabel(i18n.t("series_kind", "Series")),
+                      self.series_kind)
         self._add_row("show_steps", QLabel(""), self.show_steps)
-        self._add_row("fmt", QLabel(i18n.t("result_format")), self.fmt)
+        self._add_row("fmt",
+                      QLabel(i18n.t("result_format")), self.fmt)
         self._add_row("func_name",
-                      QLabel(i18n.t("func_name", "函数名")), self.func_name)
+                      QLabel(i18n.t("func_name", "函数名")),
+                      self.func_name)
         self._add_row("ics",
                       QLabel(i18n.t("ics", "初值条件")), self.ics)
         self._add_row("x0",
                       QLabel(i18n.t("x0", "初始值")), self.x0)
         self._add_row("opt_method",
-                      QLabel(i18n.t("method", "方法")), self.opt_method)
+                      QLabel(i18n.t("method", "方法")),
+                      self.opt_method)
         self._add_row("lp_params",
-                      QLabel(i18n.t("lp_params", "线性规划参数 (JSON)")),
+                      QLabel(i18n.t("lp_params",
+                                    "线性规划参数 (JSON)")),
                       self.lp_params)
 
+        # ---------------- 主按钮 ----------------
         self.calc_btn = QPushButton(i18n.t("calc"))
         self.calc_btn.setMinimumHeight(36)
         self.calc_btn.clicked.connect(self.calc)
@@ -163,7 +206,7 @@ class ScientificPanel(CalcPanel):
         row.addWidget(self.calc_btn, 1)
         row.addWidget(self.cancel_btn)
 
-        # 实时预览
+        # ---------------- 实时预览 ----------------
         self.preview = InlinePreviewBar(calc_fn=self._preview_calc)
         self.preview.attach(
             self.expr,
@@ -172,12 +215,14 @@ class ScientificPanel(CalcPanel):
 
         self.result = ResultView(i18n)
 
+        # ---------------- Tab ----------------
         self.tabs = QTabWidget()
         self.tabs.addTab(self.result, i18n.t("result", "结果"))
         self.tabs.addTab(self._build_var_tab(),
                          i18n.t("variables", "变量"))
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
+        # ---------------- 主布局 ----------------
         main = QVBoxLayout(self)
         main.addLayout(self.form)
         main.addWidget(self.preview)
@@ -191,11 +236,36 @@ class ScientificPanel(CalcPanel):
             on_calc=self.calc,
             on_cancel=self.cancel_current,
             on_clear=self._clear,
+            on_undo=self.undo,
             expr_widget=self.expr,
             history_getter=self._history_exprs,
         )
 
-    # ---------------- 角度 / 预览 ----------------
+        sc_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        sc_undo.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_undo.activated.connect(self.undo)
+        self._undo_sc = sc_undo
+
+        # ---------------- 智能建议（第 9 轮） ----------------
+        try:
+            from ui.widgets.suggestion_widget import (
+                SuggestionBubble,
+            )
+            self.suggest_bubble = SuggestionBubble(
+                settings, i18n, self)
+            self.suggest_bubble.attach(
+                self.expr,
+                module_key="scientific",
+                history_getter=self._history_exprs)
+            self.suggest_bubble.suggestion_clicked.connect(
+                self._on_suggestion)
+        except Exception as e:
+            log_exc(e, module="ScientificPanel.suggest_init")
+            self.suggest_bubble = None
+
+    # ==================================================================
+    # 角度 / 预览
+    # ==================================================================
 
     def _angle_mode(self) -> str:
         try:
@@ -209,7 +279,9 @@ class ScientificPanel(CalcPanel):
         except Exception:
             return None
 
-    # ---------------- 变量标签页 ----------------
+    # ==================================================================
+    # 变量 Tab
+    # ==================================================================
 
     def _build_var_tab(self):
         w = QWidget()
@@ -227,8 +299,10 @@ class ScientificPanel(CalcPanel):
         v.addWidget(self.var_table, 1)
 
         row = QHBoxLayout()
-        b_refresh = QPushButton(self.i18n.t("refresh", "刷新"))
-        b_clear = QPushButton(self.i18n.t("clear", "清空全部"))
+        b_refresh = QPushButton(
+            self.i18n.t("refresh", "刷新"))
+        b_clear = QPushButton(
+            self.i18n.t("clear", "清空全部"))
         b_refresh.clicked.connect(self._refresh_vars)
         b_clear.clicked.connect(self._clear_vars)
         row.addWidget(b_refresh)
@@ -244,22 +318,29 @@ class ScientificPanel(CalcPanel):
         for name, val in items.items():
             r = self.var_table.rowCount()
             self.var_table.insertRow(r)
-            self.var_table.setItem(r, 0, QTableWidgetItem(name))
+            self.var_table.setItem(
+                r, 0, QTableWidgetItem(name))
             display = raw.get(name, str(val))
-            self.var_table.setItem(r, 1, QTableWidgetItem(display))
+            self.var_table.setItem(
+                r, 1, QTableWidgetItem(display))
             cell = QWidget()
             h = QHBoxLayout(cell)
             h.setContentsMargins(0, 0, 0, 0)
-            b_ins = QPushButton(self.i18n.t("insert", "插入"))
-            b_del = QPushButton(self.i18n.t("delete", "删除"))
-            b_ins.clicked.connect(lambda _, n=name: self._insert_var(n))
-            b_del.clicked.connect(lambda _, n=name: self._delete_var(n))
+            b_ins = QPushButton(
+                self.i18n.t("insert", "插入"))
+            b_del = QPushButton(
+                self.i18n.t("delete", "删除"))
+            b_ins.clicked.connect(
+                lambda _, n=name: self._insert_var(n))
+            b_del.clicked.connect(
+                lambda _, n=name: self._delete_var(n))
             h.addWidget(b_ins)
             h.addWidget(b_del)
             self.var_table.setCellWidget(r, 2, cell)
 
     def _insert_var(self, name):
         try:
+            self.push_undo()
             self.expr.insert(name)
             self.tabs.setCurrentIndex(0)
         except Exception as e:
@@ -277,11 +358,14 @@ class ScientificPanel(CalcPanel):
         if idx == 1:
             self._refresh_vars()
 
-    # ---------------- 参数显隐 ----------------
+    # ==================================================================
+    # 参数显隐
+    # ==================================================================
 
     def _add_row(self, name, label, widget):
         self.form.addRow(label, widget)
-        self._rows[name] = (label, widget, self.form.rowCount() - 1)
+        self._rows[name] = (
+            label, widget, self.form.rowCount() - 1)
 
     def _update_params(self, *_):
         op = self.op.currentData()
@@ -294,44 +378,103 @@ class ScientificPanel(CalcPanel):
                 label.setVisible(vis)
                 widget.setVisible(vis)
 
+    # ==================================================================
+    # 常数
+    # ==================================================================
+
     def _pick_constant(self):
         try:
             allc = const_mod.all_constants()
-            items = [f"{k} = {v[0]}  ({v[3]})" for k, v in sorted(allc.items())]
+            items = [f"{k} = {v[0]}  ({v[3]})"
+                     for k, v in sorted(allc.items())]
             text, ok = QInputDialog.getItem(
                 self,
                 self.i18n.t("constants", "Constants"),
-                self.i18n.t("pick_constant", "Insert constant:"),
+                self.i18n.t("pick_constant",
+                            "Insert constant:"),
                 items, 0, False,
             )
             if not ok or not text:
                 return
             key = text.split("=", 1)[0].strip()
+            self.push_undo()
             self.expr.insert(key)
         except Exception as e:
             log_exc(e, module="ScientificPanel._pick_constant")
 
     def _history_exprs(self):
         try:
-            rows = self.history.list(module="scientific", limit=50,
-                                     order="id DESC")
+            rows = self.history.list(
+                module="scientific", limit=50, order="id DESC")
             return [r["expr"] for r in rows if r.get("expr")]
         except Exception:
             return []
 
+    # ==================================================================
+    # 智能建议
+    # ==================================================================
+
+    def _on_suggestion(self, action: str, payload: dict):
+        try:
+            if action == "plot":
+                expr = payload.get("expr") or ""
+                self._send_to_plot(expr)
+            elif action == "send_pipeline":
+                self._send_to_pipeline(
+                    payload.get("text") or "")
+        except Exception as e:
+            log_exc(e, module="ScientificPanel._on_suggestion")
+
+    def _send_to_plot(self, expr: str):
+        try:
+            from ui.signals import bus
+            bus().send_to_plot.emit(expr)
+        except Exception:
+            pass
+
+    def _send_to_pipeline(self, text: str):
+        try:
+            mw = self.window()
+            switch = getattr(mw, "_switch_by_key_pub", None)
+            if callable(switch):
+                switch("pipeline")
+            panel = getattr(mw, "_panels", {}).get("pipeline")
+            if panel is not None:
+                w = getattr(panel, "primary_input", None)
+                if w is not None and hasattr(w, "setText"):
+                    w.setText(str(text))
+        except Exception:
+            pass
+
+    # ==================================================================
+    # 清空 / 计算
+    # ==================================================================
+
     def _clear(self):
         try:
+            self.push_undo()
             self.expr.clear()
             self.result.show_result("", "")
         except Exception:
             pass
 
-    # ---------------- 计算 ----------------
-
     def calc(self):
         op = self.op.currentData()
         expr = self.expr.text()
+
+        # LaTeX 检测（第 6 轮）
+        try:
+            from core import latex_parser as lp
+            if lp.looks_like_latex(expr):
+                r = lp.latex_to_expr(expr)
+                if r.ok and r.expr:
+                    self.expr.setText(r.expr)
+                    expr = r.expr
+        except Exception:
+            pass
+
         var = self.var.text() or "x"
+        self.push_undo()
         self._calc_start = time.time()
         self.run(
             self._compute, op, expr, var,
@@ -385,27 +528,32 @@ class ScientificPanel(CalcPanel):
         if op == "solve":
             if self.show_steps.isChecked():
                 sols, steps = engine.sci_steps_solve(expr, var)
-                return {"__solutions__": sols, "__steps__": steps}
+                return {"__solutions__": sols,
+                        "__steps__": steps}
             return engine.sci_solve(expr, var)
         if op == "solve_ineq":
             return engine.sci_solve_inequality(expr, var)
         if op == "solve_system":
-            return engine.sci_solve_system(self.equations.toPlainText(),
-                                           self.vars.text())
+            return engine.sci_solve_system(
+                self.equations.toPlainText(),
+                self.vars.text())
         if op == "diff":
             return engine.sci_diff(expr, var, self.order.value())
         if op == "integrate":
-            return engine.sci_integrate(expr, var,
-                                        self.lower.text() or None,
-                                        self.upper.text() or None)
+            return engine.sci_integrate(
+                expr, var,
+                self.lower.text() or None,
+                self.upper.text() or None)
         if op == "quad":
-            return engine.sci_quad(expr, var,
-                                   self.lower.text() or "0",
-                                   self.upper.text() or "1")
+            return engine.sci_quad(
+                expr, var,
+                self.lower.text() or "0",
+                self.upper.text() or "1")
         if op == "limit":
-            return engine.sci_limit(expr, var,
-                                    self.point.text() or "0",
-                                    self.direction.currentData())
+            return engine.sci_limit(
+                expr, var,
+                self.point.text() or "0",
+                self.direction.currentData())
         if op == "series":
             return engine.sci_series_ext(
                 expr, var,
@@ -413,13 +561,15 @@ class ScientificPanel(CalcPanel):
                 self.order.value(),
                 self.series_kind.currentData())
         if op == "summation":
-            return engine.sci_summation(expr, var,
-                                        self.lower.text() or "1",
-                                        self.upper.text() or "10")
+            return engine.sci_summation(
+                expr, var,
+                self.lower.text() or "1",
+                self.upper.text() or "10")
         if op == "product":
-            return engine.sci_product(expr, var,
-                                      self.lower.text() or "1",
-                                      self.upper.text() or "10")
+            return engine.sci_product(
+                expr, var,
+                self.lower.text() or "1",
+                self.upper.text() or "10")
         if op == "dsolve":
             return engine.sci_dsolve(
                 expr, self.func_name.text() or "y", var,
@@ -430,7 +580,8 @@ class ScientificPanel(CalcPanel):
                 self.x0.text() or "0",
                 self.opt_method.currentData() or "BFGS")
         if op == "linprog":
-            return engine.sci_linprog(self.lp_params.toPlainText())
+            return engine.sci_linprog(
+                self.lp_params.toPlainText())
         return "未知操作"
 
     def _special_hints(self, op, r):
@@ -442,13 +593,18 @@ class ScientificPanel(CalcPanel):
             if isinstance(r, list) and len(r) > 1:
                 return (f"{self.i18n.t('multi_solution', 'Multiple solutions')}"
                         f" ({len(r)})")
-            if isinstance(r, dict) and any(isinstance(v, list) for v in r.values()):
-                return self.i18n.t("infinite_solutions", "Infinite solutions")
+            if (isinstance(r, dict)
+                    and any(isinstance(v, list)
+                            for v in r.values())):
+                return self.i18n.t("infinite_solutions",
+                                   "Infinite solutions")
         if op == "limit":
             if r in (sp.zoo, sp.nan, sp.oo, -sp.oo):
-                return self.i18n.t("limit_not_exist", "Limit does not exist")
+                return self.i18n.t("limit_not_exist",
+                                   "Limit does not exist")
             if hasattr(r, "is_finite") and r.is_finite is False:
-                return self.i18n.t("limit_not_exist", "Limit does not exist")
+                return self.i18n.t("limit_not_exist",
+                                   "Limit does not exist")
         return None
 
     def _on_done(self, r):
@@ -466,15 +622,20 @@ class ScientificPanel(CalcPanel):
             r = r.get("__solutions__")
 
         digits_raw = self.settings.get("result_digits", 0)
-        digits = digits_raw if isinstance(digits_raw, int) and digits_raw > 0 else None
+        digits = (digits_raw
+                  if isinstance(digits_raw, int)
+                  and digits_raw > 0 else None)
         sci = bool(self.settings.get("result_sci", False))
-        fraction = bool(self.settings.get("result_fraction", False))
-        percent = bool(self.settings.get("result_percent", False))
+        fraction = bool(
+            self.settings.get("result_fraction", False))
+        percent = bool(
+            self.settings.get("result_percent", False))
 
         try:
             fmt = self.fmt.currentText()
-            text = engine.format_result(r, fmt, digits=digits, sci=sci,
-                                        fraction=fraction, percent=percent)
+            text = engine.format_result(
+                r, fmt, digits=digits, sci=sci,
+                fraction=fraction, percent=percent)
         except Exception:
             text = str(r)
 
@@ -495,17 +656,29 @@ class ScientificPanel(CalcPanel):
 
         self.result.show_result(text, latex, steps=extra_steps,
                                 elapsed=elapsed)
-        self.add_history(f"{op}:{expr}", text, module="scientific")
+        self.add_history(f"{op}:{expr}", text,
+                         module="scientific")
+
+        if getattr(self, "suggest_bubble", None) is not None:
+            try:
+                self.suggest_bubble.set_last_result(text)
+            except Exception:
+                pass
 
     def _on_fail(self, e):
         elapsed = None
         if self._calc_start is not None:
             elapsed = time.time() - self._calc_start
-        self.result.show_error(e, elapsed=elapsed, retry_cb=self.calc)
+        self.result.show_error(e, elapsed=elapsed,
+                               retry_cb=self.calc)
 
     def _on_cancel(self):
         try:
             self.result.show_result(
-                self.i18n.t("err_cancelled_task", "Calculation cancelled"), "")
+                self.i18n.t("err_cancelled_task",
+                            "Calculation cancelled"), "")
         except Exception:
             pass
+
+
+__all__ = ["ScientificPanel"]
