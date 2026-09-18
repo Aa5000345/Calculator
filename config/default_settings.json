@@ -1,8 +1,11 @@
 {
-  "clipboard_smart_detect": false,
-  "clipboard_smart_toast": true,
+  "app_version": "1.1.0",
+
   "language": "zh_CN",
   "theme": "dark",
+  "font_family": "Microsoft YaHei",
+  "font_size": 11,
+
   "palette": {
     "dark": {
       "bg": "#1e1e1e",
@@ -29,56 +32,68 @@
       "hover": "#404000"
     }
   },
-  "font_family": "Microsoft YaHei",
-  "font_size": 11,
+
   "result_format": "text",
   "result_digits": 0,
   "result_sci": false,
   "result_fraction": false,
   "result_percent": false,
-  "currency_source": "open.er-api.com",
+
+  "angle_mode": "RAD",
+  "inline_preview": true,
+
   "visible_modules": {
     "basic": true,
     "scientific": true,
     "unit": true,
     "currency": true,
     "base": true,
+    "number_systems": true,
     "matrix": true,
     "stats": true,
+    "probability": true,
+    "random": true,
+    "data_table": true,
+    "data_ops": true,
     "plot": true,
     "plot3d": true,
+    "pipeline": true,
     "finance": true,
     "date": true,
-    "random": true,
-    "probability": true,
     "bits": true,
     "crypto_tools": true,
     "latex": true,
-    "data_table": true,
     "tools": true,
+    "glyph": true,
     "snippets": true,
     "timer": true,
     "clipboard_history": true,
     "script": true,
+    "notebook": true,
     "ai": true,
     "history": true,
-    "settings": true
+    "settings": true,
+    "shortcuts": true
   },
+
   "module_order": [],
   "module_groups": [
     {"name": "基础", "keys": ["basic", "scientific"]},
-    {"name": "转换", "keys": ["unit", "currency", "base"]},
-    {"name": "数据", "keys": ["stats", "probability", "random", "data_table"]},
-    {"name": "数学", "keys": ["matrix", "plot", "plot3d"]},
+    {"name": "转换", "keys": ["unit", "currency", "base", "number_systems"]},
+    {"name": "数据", "keys": ["stats", "probability", "random", "data_table", "data_ops"]},
+    {"name": "数学", "keys": ["matrix", "plot", "plot3d", "pipeline"]},
     {"name": "财务", "keys": ["finance", "date"]},
-    {"name": "工具", "keys": ["bits", "crypto_tools", "latex", "tools"]},
-    {"name": "生产力", "keys": ["snippets", "timer", "clipboard_history", "script"]},
+    {"name": "工具", "keys": ["bits", "crypto_tools", "latex", "tools", "glyph"]},
+    {"name": "生产力", "keys": ["snippets", "timer", "clipboard_history", "script", "notebook"]},
     {"name": "AI", "keys": ["ai"]},
-    {"name": "系统", "keys": ["history", "settings"]}
+    {"name": "系统", "keys": ["history", "settings", "shortcuts"]}
   ],
-  "manual_rates": {},
+
   "workspace_layout": null,
   "window_geometry": null,
+  "window_size": null,
+  "last_module": "basic",
+
   "button_layout": [
     "7", "8", "9", "/", "C",
     "4", "5", "6", "*", "(",
@@ -86,7 +101,15 @@
     "0", ".", "=", "+", "M+",
     "M-", "MR", "MC", "", ""
   ],
-  "app_version": "1.0.0",
+  "basic_fmt_mode": "auto",
+  "memory": 0,
+
+  "currency_source": "open.er-api.com",
+  "currency_auto_refresh": false,
+  "manual_rates": {},
+
+  "unit_category": "length",
+
   "tray_enabled": false,
   "minimize_to_tray": true,
 
@@ -94,10 +117,21 @@
   "keyboard_geometry": null,
   "keyboard_pinned": true,
   "keyboard_visible": false,
-  "angle_mode": "RAD",
-  "inline_preview": true,
+
+  "clipboard_smart_detect": false,
+  "clipboard_smart_toast": true,
 
   "ai_provider": "auto",
   "ai_model": "",
-  "ai_base_url": ""
+  "ai_base_url": "",
+  "suggestions_enabled": true,
+
+  "plot_latex_labels": false,
+  "plot_twin_axis": false,
+
+  "auto_check_updates": true,
+  "last_update_check": 0,
+
+  "tour_done": false,
+  "welcome_shown": false
 }

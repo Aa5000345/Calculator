@@ -2,6 +2,10 @@
 
 为了不破坏旧接口，core.engine 仍保留同名函数（向后兼容）；
 新代码请优先从本模块导入，逐步把 engine 的采样函数迁出。
+
+变更（本轮）：
+- `_parse_lambda2` 提升为公开 API `parse_lambda2`；
+  旧名 `_parse_lambda2` 保留为别名，避免 ui/panels/plot.py 直接调用私有函数。
 """
 from __future__ import annotations
 
@@ -95,12 +99,19 @@ def sample_parametric(xexpr, yexpr, tmin, tmax, points=800, var="t"):
     return _clean(xs), _clean(ys)
 
 
-def _parse_lambda2(expr_text, vars_=("x", "y")):
-    """返回 f(X, Y) —— 用于隐函数 contour。"""
+def parse_lambda2(expr_text, vars_=("x", "y")):
+    """返回 f(X, Y) —— 用于隐函数 contour。
+
+    这是公开 API（旧名 `_parse_lambda2` 保留为别名）。
+    """
     syms = [sp.Symbol(v) for v in vars_]
     e = _parse(expr_text)
     f = sp.lambdify(syms, e, modules=["numpy"])
     return lambda X, Y: f(X, Y)
+
+
+# 向后兼容别名：旧代码 `plot_sample._parse_lambda2` 仍可用
+_parse_lambda2 = parse_lambda2
 
 
 def sample_surface(expr, xmin, xmax, ymin, ymax,
@@ -128,5 +139,5 @@ __all__ = [
     "sample_polar",
     "sample_parametric",
     "sample_surface",
-    "_parse_lambda2",
+    "parse_lambda2",
 ]
