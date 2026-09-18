@@ -1,17 +1,16 @@
 """快捷键配置：用户自定义键位（最终版）。
 
-变更历史：
-- 第 4 轮：初版（硬编码 DEFAULTS / LABELS）
-- 第 13 轮：加 snapshot_save / snapshot_timeline 默认键
-- 第 18 轮：移除硬编码 DEFAULTS / LABELS，
-            改为从 core.shortcut_meta 动态生成
-
 存储：~/.multicalc/shortcuts.json
 格式：{"<command_id>": "<key sequence>"}
 
 设计：
+- 默认值从 core.shortcut_meta 动态生成
 - 用户覆盖与默认值分离：只在文件中存"与默认不同的键"
 - 向后兼容模块级 DEFAULTS / LABELS（通过 __getattr__ 动态生成）
+
+修复记录：
+- 第 20 轮：set() / reset() 中的 `global _CACHE` 提到函数体首行，
+          避免 SyntaxError（name assigned before global declaration）
 """
 from __future__ import annotations
 
@@ -33,11 +32,10 @@ def _path() -> str:
 
 
 # ---------------------------------------------------------------------------
-# 动态生成默认值与标签（替代旧的硬编码）
+# 动态生成默认值与标签
 # ---------------------------------------------------------------------------
 
 def _defaults() -> dict:
-    """从 shortcut_meta 动态生成默认键位表。"""
     out = {}
     for m in sc_meta.all_metas():
         out[m.command_id] = m.default
@@ -45,7 +43,6 @@ def _defaults() -> dict:
 
 
 def _labels() -> dict:
-    """从 shortcut_meta 动态生成标签表。"""
     out = {}
     for m in sc_meta.all_metas():
         out[m.command_id] = m.label
@@ -53,11 +50,6 @@ def _labels() -> dict:
 
 
 def __getattr__(name: str):
-    """模块级属性访问兜底：动态提供 DEFAULTS / LABELS。
-
-    这样旧代码 `from core.shortcut_config import DEFAULTS` 仍然可用，
-    但内容会随 shortcut_meta 更新而同步。
-    """
     if name == "DEFAULTS":
         return _defaults()
     if name == "LABELS":
@@ -119,6 +111,7 @@ def get_all() -> dict:
 
 def set(command_id: str, key: str):
     """设置某个命令的快捷键；key 为空则删除（回退默认）。"""
+    global _CACHE
     with _LOCK:
         data = dict(_load())
         if key:
@@ -126,31 +119,25 @@ def set(command_id: str, key: str):
         else:
             data.pop(command_id, None)
         _save(data)
-        global _CACHE
         _CACHE = data
 
 
 def reset(command_id: str | None = None):
     """重置某个命令或全部命令。"""
+    global _CACHE
     with _LOCK:
         if command_id is None:
             _save({})
-            global _CACHE
             _CACHE = {}
             return
         data = dict(_load())
         data.pop(command_id, None)
         _save(data)
-        global _CACHE
         _CACHE = data
 
 
 def conflicts() -> list:
-    """检测冲突：返回 [(key, [command_id, ...]), ...]。
-
-    只检测"全局作用域"层面的简单冲突（同一 key 映射到多个命令）。
-    更精细的作用域检测见 core.shortcut_scheme.detect_conflicts。
-    """
+    """检测冲突：返回 [(key, [command_id, ...]), ...]。"""
     all_keys = get_all()
     by_key: dict = {}
     for cmd, key in all_keys.items():
@@ -161,13 +148,11 @@ def conflicts() -> list:
 
 
 def label(command_id: str) -> str:
-    """取命令的中文标签。"""
     m = sc_meta.get_meta(command_id)
     return m.label if m else command_id
 
 
 def defaults() -> dict:
-    """公开的默认值快照（避免每次都通过 __getattr__）。"""
     return _defaults()
 
 
