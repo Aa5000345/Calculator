@@ -5,19 +5,20 @@
 用法：
     editor = ShortcutEditor(settings, i18n, parent)
     editor.changed.connect(on_shortcuts_changed)
+
+修复记录：
+- 第 18 轮：初版
+- 本轮：修复 _import() 中 `.format` 行首语法错误（改为拆局部变量）
 """
 from __future__ import annotations
-
-import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog,
     QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget, QTreeWidgetItemIterator,
+    QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from core import shortcut_config as sc_cfg
@@ -97,7 +98,6 @@ class _RecordDialog(QDialog):
         self.key_sequence = text
         self.label.setText(text)
 
-        # 系统冲突警告
         if sc_meta.is_system_conflict(text):
             self.label.setStyleSheet(
                 "font-size: 16pt; padding: 20px;"
@@ -128,14 +128,14 @@ class _RecordDialog(QDialog):
 class ShortcutEditor(QWidget):
     """快捷键编辑器。"""
 
-    changed = Signal()   # 用户修改了某个键位
+    changed = Signal()
 
     def __init__(self, settings, i18n, parent=None):
         super().__init__(parent)
         self.settings = settings
         self.i18n = i18n
 
-        # ---------------- 顶部：搜索 + 方案 ----------------
+        # 顶部：搜索 + 预设方案
         self.search = QLineEdit()
         self.search.setPlaceholderText(
             i18n.t("shortcut_search_hint", "搜索命令…"))
@@ -147,7 +147,7 @@ class ShortcutEditor(QWidget):
             i18n.t("shortcut_preset_custom", "（自定义）"), "custom")
         for p in sc_scheme.list_presets():
             label = (p["label_zh"]
-                     if i18n.lang.startswith("zh")
+                     if self.i18n.lang.startswith("zh")
                      else p["label_en"])
             self.preset_box.addItem(
                 i18n.t("shortcut_preset_tpl", "方案：{n}")
@@ -159,7 +159,7 @@ class ShortcutEditor(QWidget):
         b_apply = QPushButton(i18n.t("apply", "应用"))
         b_apply.clicked.connect(self._apply_preset)
 
-        # ---------------- 中间：树 ----------------
+        # 中间：树
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels([
             i18n.t("shortcut_col_command", "命令"),
@@ -175,7 +175,7 @@ class ShortcutEditor(QWidget):
         self.tree.customContextMenuRequested.connect(
             self._show_context_menu)
 
-        # ---------------- 底部：操作 ----------------
+        # 底部：操作
         self.conflict_chk = QCheckBox(
             i18n.t("shortcut_warn_system",
                    "警告系统级冲突"))
@@ -206,7 +206,7 @@ class ShortcutEditor(QWidget):
         self.status = QLabel("")
         self.status.setStyleSheet("color: #888; padding: 2px;")
 
-        # ---------------- 布局 ----------------
+        # 布局
         top = QHBoxLayout()
         top.addWidget(self.search, 1)
         top.addWidget(QLabel(i18n.t(
@@ -240,14 +240,12 @@ class ShortcutEditor(QWidget):
         self._refresh()
 
     def _on_preset_changed(self, *_):
-        # 只切换下拉，不立即应用（避免误操作）
         pass
 
     def _refresh(self):
         q = self.search.text().strip()
         metas = sc_meta.search(q) if q else sc_meta.all_metas()
 
-        # 冲突检测
         conflicts = {}
         warn_sys = self.conflict_chk.isChecked()
         try:
@@ -258,7 +256,6 @@ class ShortcutEditor(QWidget):
         except Exception as e:
             log_exc(e, module="ShortcutEditor._refresh.conflicts")
 
-        # 分组
         groups = sc_meta.list_groups()
         by_group: dict = {k: [] for k, _, _ in groups}
         for m in metas:
@@ -289,10 +286,8 @@ class ShortcutEditor(QWidget):
                 child = QTreeWidgetItem([
                     label_text, key_text, m.scope])
                 child.setData(0, Qt.UserRole, m.command_id)
-                # 冲突标红
                 if m.command_id in conflicts:
-                    color = Qt.red
-                    child.setForeground(1, color)
+                    child.setForeground(1, Qt.red)
                     tips = []
                     for c in conflicts[m.command_id]:
                         if c["is_system"]:
@@ -309,7 +304,6 @@ class ShortcutEditor(QWidget):
 
         self.tree.expandAll()
 
-        # 状态栏：冲突数量
         n_conf = sum(1 for k, v in conflicts.items() if v)
         if n_conf:
             self.status.setText(self.i18n.t(
@@ -343,9 +337,6 @@ class ShortcutEditor(QWidget):
             return
 
         meta = sc_meta.get_meta(cmd_id)
-        title = (meta.label if meta and
-                 self.i18n.lang.startswith("zh")
-                 else (meta.label_en if meta else cmd_id))
 
         dlg = _RecordDialog(self.i18n, self)
         if dlg.exec() != QDialog.Accepted:
@@ -353,7 +344,6 @@ class ShortcutEditor(QWidget):
 
         new_key = dlg.key_sequence
 
-        # 冲突预检查
         if new_key:
             current = {
                 m.command_id: sc_cfg.get(m.command_id)
@@ -524,16 +514,23 @@ class ShortcutEditor(QWidget):
                 self, "Error", r.get("error", "导入失败"))
             return
 
+        # 主消息（拆局部变量，避免 .format 在行首）
         msg = self.i18n.t(
             "shortcut_import_done",
             "导入完成：应用 {n} 项").format(n=r["applied"])
-        if r.get("unknown"):
-            msg += "\n\n" + self.i18n.t(
+
+        # 若有未知命令，追加一段提示
+        unknown = r.get("unknown") or []
+        if unknown:
+            unknown_list = ", ".join(str(x) for x in unknown[:8])
+            if len(unknown) > 8:
+                unknown_list += "..."
+            unknown_tmpl = self.i18n.t(
                 "shortcut_import_unknown",
                 "忽略未知命令 {n} 项：\n{list}")
-            .format(n=len(r["unknown"]),
-                    list=", ".join(r["unknown"][:8])
-                    + ("..." if len(r["unknown"]) > 8 else ""))
+            msg += "\n\n" + unknown_tmpl.format(
+                n=len(unknown), list=unknown_list)
+
         QMessageBox.information(self, "OK", msg)
         self._select_current_preset()
         self._refresh()
@@ -574,3 +571,6 @@ class ShortcutEditor(QWidget):
                 QApplication.clipboard().setText(cmd_id)
             except Exception:
                 pass
+
+
+__all__ = ["ShortcutEditor"]
