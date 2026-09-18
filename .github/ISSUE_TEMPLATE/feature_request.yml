@@ -1,0 +1,133 @@
+name: 💡 功能建议
+description: 提出一个新功能或改进建议
+title: "[Feature] "
+labels: ["enhancement", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你的建议！请先确认
+        [现有 Issues](https://github.com/Aa5000345/Calculator/issues)
+        中没有相同建议。
+
+        > 💬 如果你想先讨论想法（而不是正式提议），
+        > 欢迎到 [Discussions](https://github.com/Aa5000345/Calculator/discussions) 发帖。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经搜索过 [现有 Issues](https://github.com/Aa5000345/Calculator/issues)，确认这不是重复建议
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到了什么问题？
+      description: 描述这个功能想解决什么痛点，越具体越好
+      placeholder: |
+        例如：我经常需要「单位换算 → 结果存变量 → 用变量算别的」，
+        现在只能手动切面板，很麻烦。
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 你希望的解决方案
+      description: 描述你期望的交互方式 / 效果
+      placeholder: |
+        例如：支持管道语法 `1 km | to m | * 2`，
+        在基础面板直接执行。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+      description: 你是否尝试过其他做法？其他软件是怎么处理的？
+      placeholder: |
+        例如：我试过用脚本面板，但每次都要手写完整表达式，
+        不如管道直观。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: 相关模块
+      description: 这个功能主要涉及哪个面板 / 功能？
+      options:
+        - 基础计算
+        - 科学计算
+        - 单位换算
+        - 汇率换算
+        - 进制转换
+        - 矩阵
+        - 统计
+        - 概率
+        - 随机数
+        - 数据表
+        - 绘图
+        - 3D 绘图
+        - 财务
+        - 日期
+        - 位运算
+        - 加密工具
+        - LaTeX 编辑器
+        - 工具
+        - 片段
+        - 计时器
+        - 剪贴板
+        - 脚本
+        - AI 助手
+        - 历史记录
+        - 设置
+        - 浮动键盘
+        - 命令面板
+        - 手写 / OCR
+        - 全局 / 跨面板
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级（你的看法）
+      description: 这个功能对你的重要程度
+      options:
+        - 高 —— 影响日常使用
+        - 中 —— 有更好，没有也行
+        - 低 —— 锦上添花
+    validations:
+      required: true
+
+  - type: dropdown
+    id: willing
+    attributes:
+      label: 你愿意为这个功能做贡献吗？
+      description: 不强制，但有助于评估可行性
+      options:
+        - 愿意提交 PR
+        - 愿意帮忙测试
+        - 只提建议
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: |
+        截图、参考实现、相关链接等。
+        如果其他计算器（如 Qalculate、SpeedCrunch、Numbat）有这个功能，
+        可以描述它们是怎么做的。
+      placeholder: |
+        参考：Numbat 支持 `1 km -> m` 这样的语法，
+        详见 https://numbat.dev/
+    validations:
+      required: false

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 使用文档
+    url: https://github.com/Aa5000345/Calculator#readme
+    about: 查看 README 了解安装、使用和配置
+  - name: 💬 讨论区
+    url: https://github.com/Aa5000345/Calculator/discussions
+    about: 提问、分享用法、交流想法（发帖前请先搜索）
+  - name: 🔒 安全漏洞
+    url: https://github.com/Aa5000345/Calculator/security/advisories/new
+    about: 请勿通过公开 Issue 报告安全漏洞，详见 SECURITY.md
