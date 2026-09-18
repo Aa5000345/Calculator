@@ -1,94 +1,62 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec：MultiCalc 打包配置。
+"""PyInstaller 打包配置：单文件 + 图标 + 隐式导入收集。
 
-- 若 assets/icon.ico 存在，用作 exe 图标；否则使用 PyInstaller 默认图标
-- 打包 config/ 目录（默认设置、i18n、主题、离线汇率）
-- 排除测试与开发依赖
+注意：
+- excludes 只排除真正无关的包（其他 Qt 绑定 / 交互式工具 / pytest）
+- 不要排除标准库（unittest / test / pydoc），否则 pyparsing、matplotlib
+  之类的链式依赖会找不到模块
 """
 import os
-
 from PyInstaller.utils.hooks import collect_submodules
-
-# ---------------------------------------------------------------------------
-# 路径
-# ---------------------------------------------------------------------------
-
-ROOT = os.path.abspath(os.path.dirname(SPEC))  # noqa: F821  SPEC 由 PyInstaller 注入
-
-ICON_PATH = os.path.join(ROOT, "assets", "icon.ico")
-ICON = ICON_PATH if os.path.exists(ICON_PATH) else None
-
-if ICON is None:
-    print("[MultiCalc.spec] assets/icon.ico not found, using default icon")
-
-# ---------------------------------------------------------------------------
-# 数据文件（config 目录整体打包）
-# ---------------------------------------------------------------------------
-
-datas = [
-    (os.path.join(ROOT, "config"), "config"),
-]
-
-# 可选：若 assets 目录存在，也一并打包（用于托盘图标等）
-assets_dir = os.path.join(ROOT, "assets")
-if os.path.isdir(assets_dir):
-    datas.append((assets_dir, "assets"))
-
-# ---------------------------------------------------------------------------
-# 隐式导入
-# ---------------------------------------------------------------------------
-
-hiddenimports = [
-    # Qt 后端
-    "PySide6.QtSvg",
-    "PySide6.QtNetwork",
-    # matplotlib 后端
-    "matplotlib.backends.backend_qtagg",
-    "matplotlib.backends.backend_agg",
-    # core 子模块
-    "core.ai",
-    "core.secrets",
-    # 面板
-    "ui.panels.ai",
-    "ui.panels.script",
-    # 键盘
-    "ui.widgets.calc_keyboard",
-    "ui.widgets.focus_tracker",
-    "ui.widgets.key_button",
-    "ui.widgets.keyboard_layouts",
-]
-
-# 自动收集可能被延迟导入的包
-hiddenimports += collect_submodules("sympy")
-hiddenimports += collect_submodules("pint")
-
-# ---------------------------------------------------------------------------
-# 排除项（减小体积）
-# ---------------------------------------------------------------------------
-
-excludes = [
-    "tkinter",
-    "test",
-    "tests",
-    "unittest",
-    "pytest",
-    "IPython",
-    "jupyter",
-    "notebook",
-    "PyQt5",
-    "PyQt6",
-    "PySide2",
-    "wx",
-]
-
-# ---------------------------------------------------------------------------
-# 构建
-# ---------------------------------------------------------------------------
 
 block_cipher = None
 
-a = Analysis(  # noqa: F821
-    [os.path.join(ROOT, "main.py")],
+ROOT = os.path.abspath(os.getcwd())
+
+# ---------------- 数据文件 ----------------
+datas = [
+    (os.path.join(ROOT, "config"), "config"),
+    (os.path.join(ROOT, "plugins"), "plugins"),
+]
+
+_assets = os.path.join(ROOT, "assets")
+if os.path.isdir(_assets):
+    datas.append((_assets, "assets"))
+
+_icon = os.path.join(ROOT, "assets", "icon.ico")
+icon = _icon if os.path.exists(_icon) else None
+
+# ---------------- 隐式导入 ----------------
+hiddenimports = []
+for pkg in ("sympy", "scipy", "matplotlib", "pint",
+            "holidays", "dateutil", "pytz", "babel"):
+    try:
+        hiddenimports += collect_submodules(pkg)
+    except Exception:
+        pass
+
+# 明确需要但常被漏掉的
+hiddenimports += [
+    "pyparsing.testing",     # matplotlib → pyparsing 的链式依赖，显式声明更稳
+    "unittest",              # 同上；标准库模块，但显式声明能避免被剪
+    "unittest.mock",
+]
+
+# ---------------- 排除（仅无关项） ----------------
+excludes = [
+    # 其他 Qt 绑定（只保留 PySide6）
+    "PyQt5", "PyQt6", "PySide2",
+    # 交互式开发工具
+    "IPython", "jupyter", "notebook", "jupyterlab",
+    # 测试框架（CI 已单独跑过）
+    "pytest",
+    # 其他 GUI
+    "tkinter",
+]
+
+# ---------------- 打包 ----------------
+a = Analysis(
+    ["main.py"],
     pathex=[ROOT],
     binaries=[],
     datas=datas,
@@ -102,10 +70,9 @@ a = Analysis(  # noqa: F821
     cipher=block_cipher,
     noarchive=False,
 )
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)  # noqa: F821
-
-exe = EXE(  # noqa: F821
+exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
@@ -119,11 +86,11 @@ exe = EXE(  # noqa: F821
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,      # 无控制台窗口
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=ICON,          # 关键：None 时用默认图标
+    icon=icon,
 )
