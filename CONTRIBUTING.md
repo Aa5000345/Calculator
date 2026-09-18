@@ -1,41 +1,58 @@
 # 贡献指南
 
-感谢你有兴趣为 MultiCalc 做出贡献！
+感谢你有兴趣为 **MultiCalc** 做出贡献！本文档会帮助你快速上手。
+
+---
 
 ## 目录
 
 - [行为准则](#行为准则)
-- [我可以贡献什么？](#我可以贡献什么)
+- [我可以贡献什么](#我可以贡献什么)
 - [开发环境](#开发环境)
+- [项目结构](#项目结构)
 - [提交 Pull Request](#提交-pull-request)
 - [编码规范](#编码规范)
 - [测试](#测试)
 - [国际化](#国际化)
+- [主题开发](#主题开发)
+- [插件开发](#插件开发)
 - [发布流程](#发布流程)
+- [常见问题](#常见问题)
 
 ---
 
 ## 行为准则
 
 参与本项目即表示你同意遵守 [行为准则](CODE_OF_CONDUCT.md)。
-请在互动中保持尊重和友善。
+请在互动中保持尊重和友善。任何违反行为准则的行为都可能被
+维护者采取相应措施。
 
-## 我可以贡献什么？
+---
 
-- 🐛 **报告 Bug**：[新建 Issue](https://github.com/Aa5000345/Calculator/issues/new?template=bug_report.yml)
-- 💡 **提出功能建议**：[新建 Issue](https://github.com/Aa5000345/Calculator/issues/new?template=feature_request.yml)
-- 📖 **改进文档**
-- 🌍 **翻译**：`config/i18n/*.json`
-- 🎨 **主题**：`config/themes/*.json`
-- 🔧 **提交代码**：见下文
+## 我可以贡献什么
+
+| 类型 | 说明 | 入口 |
+|------|------|------|
+| 🐛 报告 Bug | 描述可复现的问题 | [新建 Issue](https://github.com/Aa5000345/Calculator/issues/new?template=bug_report.yml) |
+| 💡 功能建议 | 提出新功能或改进 | [新建 Issue](https://github.com/Aa5000345/Calculator/issues/new?template=feature_request.yml) |
+| 📖 改进文档 | 修正错别字、补充说明 | Pull Request |
+| 🌍 翻译 | 新增语言包 | `config/i18n/*.json` |
+| 🎨 主题 | 新增配色方案 | `config/themes/*.json` |
+| 🔧 提交代码 | 修复 Bug / 实现功能 | Pull Request |
+| 🧪 测试 | 补充测试用例 | `tests/` |
+| 🔌 插件 | 扩展新面板 / 命令 | `plugins/` |
+
+**新手友好**：Issue 中带 `good first issue` 标签的任务适合首次贡献。
+
+---
 
 ## 开发环境
 
 ### 环境要求
 
-- Python **3.10+**
+- Python **3.10** 或更高
 - Windows 11 / 10、macOS 12+、Linux（桌面环境 + Qt 运行库）
-- Git
+- Git 2.30+
 
 ### 克隆与安装
 
@@ -43,122 +60,300 @@
 git clone https://github.com/Aa5000345/Calculator.git
 cd Calculator
 
+# 建议使用虚拟环境
 python -m venv .venv
+
 # Windows
 .venv\Scripts\activate
+
 # macOS / Linux
 source .venv/bin/activate
 
+# 安装运行依赖
 pip install -r requirements.txt
-pip install pytest pytest-qt  # 测试依赖
-运行
-bash
-# GUI
+
+# 安装开发依赖（测试 / 代码检查）
+pip install pytest pytest-qt pytest-cov
+```
+
+### 运行
+
+```bash
+# GUI 模式
 python main.py
 
-# CLI
+# CLI 模式（不启动 GUI）
 python main.py -e "1+1"
 python main.py -e "sin(30)" --angle DEG
 python main.py -e "1+1" --json
-项目结构
-.
-├── main.py                 # 入口
-├── core/                   # 计算内核（不依赖 Qt）
-│   ├── engine.py           # 表达式解析 / 求值
-│   ├── probability.py      # 概率与统计
-│   ├── finance.py          # 财务
-│   ├── plot_sample.py      # 绘图采样
+
+# URL 参数（启动 GUI 并预填表达式）
+python main.py "?expr=2%2B3"
+```
+
+### 检查 i18n 一致性
+
+```bash
+python scripts/check_i18n.py
+python scripts/check_i18n.py --strict
+python scripts/check_i18n.py --check-order
+```
+
+### 生成图标
+
+```bash
+python scripts/make_icon.py          # 生成 ICO
+python scripts/make_icon.py --png    # 生成 PNG
+python scripts/make_icon.py --force  # 覆盖已存在的
+```
+
+---
+
+## 项目结构
+
+```
+Calculator/
+├── main.py                      # 应用入口（CLI 优先，延迟导入 Qt）
+├── requirements.txt             # 运行依赖
+├── pytest.ini                   # pytest 配置
+├── conftest.py                  # pytest 全局 fixture
+├── MultiCalc.spec.txt           # PyInstaller 打包配置
+│
+├── core/                        # 计算内核（不依赖 Qt）
+│   ├── engine.py                # 表达式解析 / 求值 / 格式化
+│   ├── probability.py           # 概率分布 / 假设检验 / 回归
+│   ├── finance.py               # NPV / IRR / 摊销 / 折旧 / TVM
+│   ├── bonds.py                 # 债券定价
+│   ├── options.py               # Black-Scholes
+│   ├── tax.py                   # 个税（中 / 美）
+│   ├── dates.py                 # 日期 / 工作日 / 时区
+│   ├── lunar.py                 # 农历
+│   ├── astro.py                 # 日出日落
+│   ├── bits.py / bits_ext.py    # 位运算 / CRC / 哈希
+│   ├── crypto_tools.py          # AES / RSA / TOTP
+│   ├── data_table.py            # 数据表 / 公式列
+│   ├── plot_sample.py           # 绘图采样
+│   ├── symbols.py               # 用户变量 / 函数
+│   ├── settings.py              # 设置管理
+│   ├── history.py               # SQLite 历史记录
+│   ├── i18n.py                  # 国际化
+│   ├── errors.py                # 异常类型
+│   ├── logger.py                # 日志
+│   ├── cli.py                   # CLI 解析
+│   ├── ai.py                    # AI 翻译层
+│   ├── rates.py                 # 汇率管理
 │   └── ...
-├── ui/                     # Qt 界面层
-│   ├── main_window.py      # 主窗口
-│   ├── panels/             # 25 个功能面板
-│   └── widgets/            # 浮动键盘、手写、OCR
+│
+├── ui/                          # Qt 界面层
+│   ├── main_window.py           # 主窗口
+│   ├── status_bar.py            # 状态栏
+│   ├── command_palette.py       # 命令面板（Ctrl+K）
+│   ├── shortcuts.py             # 快捷键安装
+│   ├── shortcuts_dialog.py      # 快捷键速查表（F1）
+│   ├── settings_dialog.py       # 模块可见性对话框
+│   ├── theme_editor.py          # 主题编辑器
+│   ├── toast.py                 # 非模态通知
+│   ├── tray.py                  # 系统托盘
+│   ├── split_view.py            # 分屏视图
+│   ├── signals.py               # 全局信号总线
+│   ├── latex_widget.py          # LaTeX 渲染组件
+│   ├── panels/                  # 25 个功能面板
+│   │   ├── registry.py          # 面板注册表
+│   │   ├── base.py              # CalcPanel 基类
+│   │   ├── _common.py           # 共享工具
+│   │   ├── basic.py             # 基础计算
+│   │   ├── scientific.py        # 科学计算
+│   │   └── ...
+│   └── widgets/                 # 自定义组件
+│       ├── calc_keyboard.py     # 浮动键盘
+│       ├── keyboard_layouts.py  # 键盘布局 DSL
+│       ├── focus_tracker.py     # 焦点追踪
+│       ├── handwriting.py       # 手写输入
+│       └── ocr_input.py         # 截图识别
+│
 ├── config/
-│   ├── default_settings.json
-│   ├── i18n/               # 语言包
-│   └── themes/             # 主题文件
+│   ├── default_settings.json    # 默认设置
+│   ├── i18n/
+│   │   ├── zh_CN.json           # 简体中文（基准）
+│   │   └── en_US.json           # 英文
+│   ├── themes/                  # 用户主题文件
+│   │   ├── catppuccin.json
+│   │   ├── dracula.json
+│   │   └── ...
+│   └── rates_offline.json       # 离线汇率缓存
+│
 ├── tests/
-├── plugins/                # 插件目录
-└── requirements.txt
-提交 Pull Request
-流程
-Fork 本仓库
+│   ├── test_smoke.py            # 冒烟测试
+│   └── ...
+│
+├── scripts/
+│   ├── check_i18n.py            # i18n 一致性检查
+│   └── make_icon.py             # 图标生成
+│
+├── plugins/                     # 插件目录
+│   └── rates/                   # 汇率源插件
+│
+└── assets/
+    └── icon.ico
+```
 
-从 main 切出一个分支：
+---
 
-bash
-git checkout -b feat/your-feature-name
-# 或
-git checkout -b fix/bug-description
-提交改动（遵循 Conventional Commits）
+## 提交 Pull Request
 
-推送到你的 fork
+### 完整流程
 
-向 main 分支发起 Pull Request
+1. **Fork 本仓库**
+   点击右上角 **Fork** 按钮。
 
-分支命名
-前缀	用途
-feat/	新功能
-fix/	Bug 修复
-refactor/	重构
-docs/	文档
-style/	格式调整
-test/	测试
-chore/	杂项（依赖升级、CI 等）
-提交信息规范
+2. **克隆你的 fork**
+   ```bash
+   git clone https://github.com/<你的用户名>/Calculator.git
+   cd Calculator
+   git remote add upstream https://github.com/Aa5000345/Calculator.git
+   ```
+
+3. **同步上游**
+   ```bash
+   git fetch upstream
+   git checkout main
+   git merge upstream/main
+   ```
+
+4. **创建分支**
+   ```bash
+   git checkout -b feat/your-feature-name
+   ```
+
+5. **开发 + 提交**
+   ```bash
+   git add .
+   git commit -m "feat(scope): 简短描述"
+   ```
+
+6. **推送到你的 fork**
+   ```bash
+   git push origin feat/your-feature-name
+   ```
+
+7. **发起 Pull Request**
+   在 GitHub 上点击 **Compare & pull request**，填写 PR 模板。
+
+### 分支命名
+
+| 前缀 | 用途 | 示例 |
+|------|------|------|
+| `feat/` | 新功能 | `feat/pipeline-syntax` |
+| `fix/` | Bug 修复 | `fix/bond-ytm-price` |
+| `refactor/` | 重构 | `refactor/panel-base` |
+| `docs/` | 文档 | `docs/update-readme` |
+| `style/` | 格式调整 | `style/pep8-cleanup` |
+| `test/` | 测试 | `test/stats-panel` |
+| `chore/` | 杂项 | `chore/bump-deps` |
+| `perf/` | 性能优化 | `perf/lazy-import` |
+
+### 提交信息规范
+
+遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
+
+```
 <type>(<scope>): <subject>
 
 <body>
 
 <footer>
-示例：
+```
 
-feat(currency): 支持手动币对保存
+**type**：`feat` / `fix` / `docs` / `style` / `refactor` / `perf` / `test` / `chore` / `build` / `ci` / `revert`
 
-新增「保存该币对手动汇率」按钮；读取时优先使用手动汇率。
+**scope**（可选）：`engine` / `ui` / `panels` / `i18n` / `settings` / `plot` / `finance` / ...
+
+**示例**：
+
+```
+feat(finance): 债券 Tab 新增 Market Price 输入框
+
+之前 bond_ytm 直接使用面值当价格，导致 YTM 永远等于票面利率。
+现在新增独立的 Market Price 输入框，用户可输入实际市场价格。
 
 Closes #42
-PR 检查清单
+```
+
+```
+fix(ui): ResultView 右键菜单重复添加 Copy as JSON
+
+去掉重复的 menu.addAction 调用。
+
+Fixes #17
+```
+
+**破坏性变更**：在 footer 加 `BREAKING CHANGE:` 说明。
+
+### PR 检查清单
+
 提交前请确认：
 
-□ 代码通过 python -m pytest
-□ 新增功能已添加对应测试（可选）
-□ 遵循 编码规范
-□ 更新了相关文档 / README
-□ 若涉及 UI 文案，已同步更新 config/i18n/zh_CN.json 和 en_US.json
-编码规范
-Python
-遵循 PEP 8
+- [ ] 代码通过 `python -m pytest`
+- [ ] 遵循 [编码规范](#编码规范)
+- [ ] 新增功能已添加对应测试（推荐）
+- [ ] 更新了相关文档 / README
+- [ ] 涉及 UI 文案的改动已同步更新 `zh_CN.json` 和 `en_US.json`
+- [ ] 运行 `python scripts/check_i18n.py` 通过
+- [ ] CLI 路径仍可用：`python main.py -e "1+1"`
 
-行宽上限 88 字符
+### 审查流程
 
-使用 类型注解（from __future__ import annotations）
+1. 提交 PR 后，维护者会在 **7 天内** 初步回复。
+2. 可能会请求改动（Change Request），请在原分支上继续提交。
+3. 通过后由维护者合并（推荐 **Squash merge**）。
 
-文档字符串使用 Google 风格
+---
 
-文件头用 from __future__ import annotations，避免运行时类型求值开销
+## 编码规范
 
-分层原则
-core/ 不依赖 Qt：便于测试和 CLI 复用
+### Python 基础
 
-ui/ 不直接操作 SQLite / 文件系统：走 core/ 的接口
+- 遵循 **PEP 8**
+- 行宽上限 **88** 字符（与 Black 默认一致）
+- 使用 **类型注解**：`def foo(x: int) -> str:`
+- 文件头用 `from __future__ import annotations`，避免运行时类型求值开销
+- 文档字符串使用 **Google 风格**
 
-面板之间不直接通信：走 ui/signals.py 的总线
+### 分层原则（重要）
 
-命名约定
-模块：snake_case.py
+| 层 | 职责 | 禁止 |
+|----|------|------|
+| `core/` | 纯计算逻辑 | ❌ 不 import Qt / matplotlib |
+| `ui/` | 界面展示 | ❌ 不直接操作 SQLite / 文件系统 |
+| `ui/panels/` | 面板 UI | ❌ 面板之间不直接通信 |
+| `ui/widgets/` | 可复用组件 | ❌ 不依赖具体面板 |
 
-类：PascalCase
+**为什么？**
 
-函数 / 变量：snake_case
+- `core/` 不依赖 Qt → CLI 模式可复用、可单独测试
+- `ui/` 不直接操作 SQLite → 未来可换存储后端
+- 面板不直接通信 → 通过 `ui/signals.py` 总线，避免强耦合
 
-常量：UPPER_SNAKE_CASE
+### 命名约定
 
-私有成员：_leading_underscore
+| 类型 | 约定 | 示例 |
+|------|------|------|
+| 模块 | `snake_case.py` | `data_table.py` |
+| 包 | `snake_case/` | `panels/` |
+| 类 | `PascalCase` | `BasicPanel` |
+| 函数 / 方法 | `snake_case` | `calc_result()` |
+| 变量 | `snake_case` | `user_input` |
+| 常量 | `UPPER_SNAKE_CASE` | `MAX_ITEMS` |
+| 私有成员 | `_leading_underscore` | `_worker` |
+| 类型变量 | `PascalCase` | `T = TypeVar("T")` |
 
-示例
-python
-"""模块级 docstring：一句话说明用途。"""
+### 示例
+
+```python
+"""模块级 docstring：一句话说明用途。
+
+必要时补充设计说明、依赖关系、注意事项。
+"""
 from __future__ import annotations
 
 from core.errors import InputError
@@ -168,137 +363,393 @@ def calculate(principal: float, rate: float, years: int) -> dict:
     """计算贷款月供。
 
     Args:
-        principal: 本金。
-        rate: 年利率（%）。
-        years: 年限。
+        principal: 本金（>= 0）。
+        rate: 年利率（%，>= 0）。
+        years: 年限（> 0）。
 
     Returns:
-        包含 ``monthly`` / ``total`` / ``interest`` 的字典。
+        包含以下键的字典：
+        - ``monthly``: 月供
+        - ``total``: 还款总额
+        - ``interest``: 利息总额
 
     Raises:
         InputError: 参数非法时。
     """
     if principal < 0:
-        raise InputError("本金不能为负", friendly_key="err_input")
+        raise InputError(
+            "本金不能为负",
+            friendly_key="err_finance_neg",
+        )
     ...
-测试
-bash
+```
+
+### 异常处理
+
+- 使用项目自定义异常（`core/errors.py`）
+- 不要裸 `except:`
+- 捕获后要么处理，要么重新抛出并附带上下文
+
+```python
+# ✅ 推荐
+try:
+    result = parse_expr(s)
+except SyntaxError as e:
+    raise InputError(f"语法错误：{e}",
+                     friendly_key="err_syntax") from e
+
+# ❌ 不推荐
+try:
+    result = parse_expr(s)
+except:
+    pass
+```
+
+### 导入顺序
+
+```python
+# 1. 标准库
+import os
+import sys
+
+# 2. 第三方库
+import numpy as np
+from PySide6.QtWidgets import QWidget
+
+# 3. 项目内部
+from core import engine
+from core.errors import InputError
+```
+
+---
+
+## 测试
+
+### 运行测试
+
+```bash
 # 全部测试
 python -m pytest
+
+# 详细输出
+python -m pytest -v
 
 # 仅冒烟测试
 python -m pytest tests/test_smoke.py -v
 
-# 覆盖率（可选）
+# 失败后立即停止
+python -m pytest -x
+
+# 覆盖率
 python -m pytest --cov=core --cov=ui
-国际化
-项目使用 config/i18n/*.json 存放语言包。必须保持所有语言包的键集一致。
+python -m pytest --cov=core --cov=ui --cov-report=html
+```
 
-bash
-# 检查一致性
-python scripts/check_i18n.py
+### 编写测试
 
-# 严格模式（空值也视为错误）
-python scripts/check_i18n.py --strict
-新增文案时：
+- 测试文件放在 `tests/` 下
+- 文件名：`test_*.py`
+- 测试类：`Test*`
+- 测试函数：`test_*`
 
-在 zh_CN.json 加 key（基准语言）
+```python
+"""核心引擎冒烟测试。"""
+from __future__ import annotations
 
-在 en_US.json 加对应翻译
+import pytest
 
-运行 check_i18n.py 确认
+from core import engine
 
-发布流程
-仅供维护者参考：
 
-更新 default_settings.json 中的 app_version
+def test_basic_calc_addition():
+    assert engine.basic_calc("1+1") == 2
 
-更新 core/cli.py 中的 APP_VERSION
 
-打 tag：git tag -a v1.0.1 -m "Release v1.0.1"
+def test_basic_calc_division_by_zero():
+    from core.errors import MathError
+    with pytest.raises(MathError):
+        engine.basic_calc("1/0")
+```
 
-推送 tag：git push origin v1.0.1
+### 无 GUI 测试
 
-GitHub Actions 会自动构建并创建 Release
-
-再次感谢你的贡献！🎉
-
+CI 环境下无需显示，`conftest.py` 已设置 `QT_QPA_PLATFORM=offscreen`。
 
 ---
 
-## 4. `SECURITY.md`
+## 国际化
 
-```markdown
-# 安全政策
+### 语言包位置
 
-## 支持的版本
+`config/i18n/<lang>.json`，目前支持：
 
-我们为以下版本提供安全更新：
+- `zh_CN.json` — 简体中文（**基准语言**，新 key 从这里开始）
+- `en_US.json` — 英文
 
-| 版本 | 支持状态 |
-|------|----------|
-| 最新 release | ✅ 支持 |
-| 更早版本 | ❌ 不支持 |
+### 新增文案
 
-**建议始终使用最新版本。**
+1. 在 `zh_CN.json` 添加 key：
 
-## 报告漏洞
+   ```json
+   {
+     "my_new_label": "我的新标签"
+   }
+   ```
 
-**请不要通过公开 Issue 报告安全漏洞。**
+2. 在 `en_US.json` 添加对应翻译：
 
-如果你发现了安全漏洞，请通过以下方式之一私下报告：
+   ```json
+   {
+     "my_new_label": "My New Label"
+   }
+   ```
 
-1. **GitHub 私有漏洞报告**（推荐）：
-   在仓库页面点击 **Security** → **Report a vulnerability**
-   https://github.com/Aa5000345/Calculator/security/advisories/new
+3. 在代码中使用：
 
-2. **邮件**：若无法使用 GitHub，请通过仓库主页公开的联系方式
-   联系维护者，标题注明 `[SECURITY]`。
+   ```python
+   label = QLabel(i18n.t("my_new_label", "默认文本"))
+   ```
 
-## 报告内容
+4. 运行检查：
 
-请尽可能提供以下信息：
+   ```bash
+   python scripts/check_i18n.py
+   ```
 
-- 漏洞类型（例如：命令注入、路径穿越、XSS 等）
-- 受影响的文件 / 函数 / 版本
-- 复现步骤（最小可复现示例）
-- 潜在影响
-- 建议的修复方案（如有）
+### 占位符规范
 
-## 响应时间
+使用 `{name}` 而非 `%s`：
 
-我们会在 **7 天内** 确认收到报告，并在 **30 天内** 给出初步评估。
-修复版本发布后，我们会在此仓库的 Release Notes 中致谢报告者（除非你要求匿名）。
+```python
+# ✅ 推荐
+i18n.t("ai_key_set", "已设置：{k}").format(k=shown)
 
-## 范围
+# ❌ 不推荐
+i18n.t("ai_key_set", "已设置：%s") % shown
+```
 
-以下**属于**安全范围：
+### 检查选项
 
-- `core/engine.py` 的表达式求值沙箱绕过
-- `core/crypto_tools.py` 的加密实现缺陷
-- `core/secrets.py` 的密钥泄露
-- 插件加载机制的任意代码执行
-- 网络请求的 SSRF / 中间人攻击
+| 命令 | 作用 |
+|------|------|
+| `python scripts/check_i18n.py` | 检查键集一致 + 占位符匹配 |
+| `--base en_US` | 指定基准语言 |
+| `--strict` | 空值也视为错误 |
+| `--check-order` | 检查键顺序是否一致 |
+| `--i18n-dir <path>` | 指定 i18n 目录 |
 
-以下**不属于**安全范围：
+### 添加新语言
 
-- 用户自己输入危险表达式（`core/engine.py` 已有沙箱，见 `_FORBIDDEN_SUBSTR`）
-- 用户机器上的本地权限问题
-- 依赖库自身的已知漏洞（请直接报告给上游）
-- 社会工程学攻击
+1. 复制 `en_US.json` 为 `ja_JP.json`（或目标语言代码）
+2. 逐条翻译
+3. 在 `ui/panels/settings.py` 的语言下拉框里加一项
+4. 运行 `check_i18n.py` 确认
 
-## 安全设计说明
+---
 
-MultiCalc 在设计上有以下安全考量：
+## 主题开发
 
-1. **表达式沙箱**：`core/engine.py` 的 `_safety_check()` 拒绝
-   `__` / `import` / `eval` / `exec` / `open` 等危险内容
-2. **API 密钥隔离**：`core/secrets.py` 将密钥存到 `~/.multicalc/secrets.json`，
-   与 `settings.json` 分离，导入/导出设置不会泄露密钥
-3. **公式沙箱**：`core/data_table.py` 的 `_eval_formula` 使用 AST 白名单 +
-   受限的 `__builtins__`
-4. **网络请求**：所有外部请求都有超时；失败时优雅降级到离线数据
+### 主题文件格式
 
-## 致谢
+`config/themes/<name>.json`：
 
-感谢所有负责任地披露安全问题的研究者。
+```json
+{
+  "name": "my_theme",
+  "label": "My Theme",
+  "palette": {
+    "bg": "#1e1e2e",
+    "fg": "#cdd6f4",
+    "panel": "#313244",
+    "accent": "#cba6f7",
+    "border": "#45475a",
+    "hover": "#45475a"
+  }
+}
+```
+
+### 字段说明
+
+| 字段 | 含义 | 示例 |
+|------|------|------|
+| `name` | 唯一 ID（文件名一致） | `catppuccin` |
+| `label` | 显示名 | `Catppuccin Mocha` |
+| `palette.bg` | 背景色 | `#1e1e2e` |
+| `palette.fg` | 前景（文字）色 | `#cdd6f4` |
+| `palette.panel` | 面板背景 | `#313244` |
+| `palette.accent` | 强调色（选中 / 高亮） | `#cba6f7` |
+| `palette.border` | 边框色 | `#45475a` |
+| `palette.hover` | 悬停色 | `#45475a` |
+
+### 提交主题
+
+1. 在 `config/themes/` 下添加 `<name>.json`
+2. 启动应用，在「设置 → 主题」里应该能看到
+3. 提交 PR，附上截图
+
+也可以在应用内用「主题编辑器」可视化编辑后导出。
+
+---
+
+## 插件开发
+
+### 目录结构
+
+```
+plugins/
+└── my_plugin/
+    ├── plugin.json          # 元数据（推荐）
+    └── __init__.py          # 可选：注册回调
+```
+
+### `plugin.json`
+
+```json
+{
+  "name": "My Plugin",
+  "version": "1.0.0",
+  "description": "一句话说明插件作用",
+  "author": "你的名字",
+  "enabled": true
+}
+```
+
+### `__init__.py`
+
+```python
+"""插件入口：可选的 register() 回调。"""
+
+
+def register(app_context):
+    """应用启动时调用。
+
+    Args:
+        app_context: 包含以下键的字典：
+            - settings: Settings 实例
+            - i18n: I18n 实例
+            - history: History 实例
+            - main_window: MainWindow 实例
+    """
+    # 例如：注册一个新的汇率源
+    from core.rates import RateSource, register_source
+
+    class MyRateSource(RateSource):
+        name = "my_source"
+        label = "My Rate Source"
+        priority = 50
+        is_online = True
+
+        def fetch(self):
+            import requests
+            r = requests.get("https://api.example.com/rates", timeout=10)
+            return r.json()["rates"]
+
+    register_source(MyRateSource())
+```
+
+### 汇率源插件
+
+放在 `plugins/rates/`，会自动加载。详见 `core/rates.py` 的
+`load_plugin_dir()`。
+
+---
+
+## 发布流程
+
+**仅维护者**：
+
+### 1. 更新版本号
+
+- `config/default_settings.json` → `app_version`
+- `core/cli.py` → `APP_VERSION`
+- `README.md` 徽章（如有）
+
+### 2. 更新 CHANGELOG（如有）
+
+### 3. 打标签
+
+```bash
+git tag -a v1.0.1 -m "Release v1.0.1"
+git push origin v1.0.1
+```
+
+### 4. GitHub Actions
+
+推 tag 后自动触发构建：
+
+- 打包 Windows exe
+- 生成 Release Notes
+- 上传构建产物
+
+### 5. 手动构建（备用）
+
+```bash
+pip install pyinstaller
+pyinstaller MultiCalc.spec.txt
+# 产物：dist/MultiCalc.exe
+```
+
+---
+
+## 常见问题
+
+### Q: 为什么 `core/` 不依赖 Qt？
+
+A: 这样 CLI 模式（`python main.py -e "..."`）可以在没有 GUI 的
+环境下运行，也便于单元测试。核心计算逻辑本身与 UI 无关。
+
+### Q: 面板之间怎么通信？
+
+A: 通过 `ui/signals.py` 的全局信号总线：
+
+```python
+from ui.signals import bus
+
+# 发送
+bus().send_to_basic.emit("1+1")
+
+# 接收（通常在 MainWindow 中）
+bus().send_to_basic.connect(self._on_send_to_basic)
+```
+
+不要直接 import 另一个面板。
+
+### Q: 为什么 `main.py` 里 CLI 优先？
+
+A: CLI 模式只需要 `core/`，无需加载 Qt / matplotlib（节省
+2~4 秒启动时间）。所以 `try_run_cli()` 在导入 Qt 之前调用。
+
+### Q: 打包后 `config/` 目录找不到？
+
+A: PyInstaller 会把 `config/` 解压到 `sys._MEIPASS`。
+`MultiCalc.spec.txt` 已配置 datas。运行时用 `base_path` 定位。
+
+### Q: 如何调试 Qt 崩溃？
+
+A: 日志在 `~/.multicalc/logs/app.log`。也可以：
+
+```bash
+# Linux / macOS
+QT_LOGGING_RULES="*.debug=true" python main.py
+
+# Windows
+set QT_LOGGING_RULES=*.debug=true
+python main.py
+```
+
+### Q: 如何避免打包体积过大？
+
+A: `MultiCalc.spec.txt` 的 `excludes` 已经排除 PyQt5/6、tkinter、
+IPython 等。如果加了新依赖，记得检查是否需要排除子模块。
+
+---
+
+## 联系方式
+
+- 🐛 [Issues](https://github.com/Aa5000345/Calculator/issues)
+- 💬 [Discussions](https://github.com/Aa5000345/Calculator/discussions)
+- 🔒 [安全漏洞](SECURITY.md)
+
+---
+
+再次感谢你的贡献！🎉
