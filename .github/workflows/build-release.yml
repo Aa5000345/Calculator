@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,43 +24,63 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller pyinstaller-hooks-contrib pytest
+          pip install pyinstaller pytest
 
       - name: Check i18n consistency
         run: python scripts/check_i18n.py
+        env:
+          PYTHONUTF8: "1"
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short -m "not optional and not network"
+        env:
+          QT_QPA_PLATFORM: offscreen
+          MPLBACKEND: Agg
+          PYTHONUTF8: "1"
 
-      - name: Generate default icon if missing
-        run: |
-          if (-not (Test-Path "assets/icon.ico")) {
-            Write-Host "assets/icon.ico not found; generating..."
-            python scripts/make_icon.py
-          } else {
-            Write-Host "assets/icon.ico exists; skipping generation"
-          }
+      - name: Generate icon (if missing)
+        if: ${{ !hashFiles('assets/icon.ico') }}
+        run: python scripts/make_icon.py
+        env:
+          PYTHONUTF8: "1"
 
       - name: Build with PyInstaller
         run: pyinstaller MultiCalc.spec --clean --noconfirm
+        env:
+          PYTHONUTF8: "1"
 
-      - name: List dist
+      - name: Show dist contents
         run: dir dist
 
+      - name: Verify exe exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\MultiCalc.exe")) {
+            Write-Error "dist\MultiCalc.exe not found"
+            exit 1
+          }
+
       - name: Package exe
-        run: Compress-Archive -Path dist\MultiCalc.exe -DestinationPath MultiCalc-Windows.zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\MultiCalc.exe" `
+                           -DestinationPath "MultiCalc-Windows.zip" `
+                           -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: MultiCalc-Windows
           path: MultiCalc-Windows.zip
+          if-no-files-found: error
 
       - name: Create Release and upload asset
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: MultiCalc-Windows.zip
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
