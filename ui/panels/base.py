@@ -1,10 +1,14 @@
-"""CalcPanel 基类：Worker 管理 / 取消 / 设置回调 / 主题回调 / 键盘按钮 /
-primary_input / 撤销栈 / 自动重试。
+"""CalcPanel 基类：Worker 管理 / 取消 / 设置回调 / 主题回调 /
+键盘按钮 / primary_input / 撤销栈 / 自动重试。
+
+依赖（合并后）：
+    PySide6.QtWidgets
+    core.runtime —— Worker（延迟导入）
 
 变更历史：
 - 第 2 轮：primary_input、_undo_stack、_notify_task
-- 第 3 轮：run() 默认 on_fail 自动把 retry_cb 注入 ResultView；
-         新增 get_result_view()、_default_on_fail()
+- 第 3 轮：run() 默认 on_fail 自动把 retry_cb 注入 ResultView
+- 本轮：无（仅导入路径统一，实际 Worker 导入仍走 _common）
 """
 from __future__ import annotations
 
@@ -39,8 +43,9 @@ class CalcPanel(QWidget):
         from ._common import run_async
         self._notify_task(True, "⏳ 计算中")
 
-        # 未显式传 on_fail 时，走默认的「显示错误 + 注入重试」
-        fail_cb = on_fail if on_fail is not None else self._default_on_fail
+        fail_cb = (on_fail
+                   if on_fail is not None
+                   else self._default_on_fail)
 
         def _wrap_done(r):
             self._notify_task(False)
@@ -97,14 +102,16 @@ class CalcPanel(QWidget):
 
     def cancel_current(self):
         try:
-            if self._worker is not None and self._worker.isRunning():
+            if (self._worker is not None
+                    and self._worker.isRunning()):
                 self._worker.cancel()
         except Exception:
             pass
 
     def shutdown_workers(self, wait_ms: int = 2000):
         try:
-            if self._worker is not None and self._worker.isRunning():
+            if (self._worker is not None
+                    and self._worker.isRunning()):
                 self._worker.cancel()
                 self._worker.wait(wait_ms)
         except Exception:
@@ -179,7 +186,8 @@ class CalcPanel(QWidget):
         btn = QPushButton("⌨")
         btn.setFixedSize(28, 24)
         try:
-            btn.setToolTip(self.i18n.t("calc_keyboard", "计算器键盘"))
+            btn.setToolTip(self.i18n.t(
+                "calc_keyboard", "计算器键盘"))
         except Exception:
             btn.setToolTip("计算器键盘")
         btn.setFocusPolicy(Qt.NoFocus)

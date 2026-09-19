@@ -1,55 +1,61 @@
-"""所有面板的统一入口。"""
-from .basic import BasicPanel
-from .scientific import ScientificPanel
-from .unit import UnitPanel
-from .currency import CurrencyPanel
-from .base_convert import BasePanel
-from .matrix import MatrixPanel
-from .stats import StatsPanel
-from .plot import PlotPanel
-from .plot3d import Plot3DPanel
-from .finance import FinancePanel
-from .date import DatePanel
-from .random_panel import RandomPanel
-from .probability import ProbabilityPanel
-from .bits import BitsPanel
-from .crypto_tools import CryptoPanel
-from .latex_editor import LatexEditorPanel
-from .history import HistoryPanel
-from .settings import SettingsPanel
-from .data_table import DataTablePanel
-from .tools import ToolsPanel
-from .snippets import SnippetsPanel
-from .timer_panel import TimerPanel
-from .clipboard_history import ClipboardHistoryPanel
-from .ai import AIPanel
-from .script import ScriptPanel
+"""所有面板的统一入口。
+
+合并后的新布局：
+    basic / scientific / convert / data / math / finance
+    / tools / productivity / ai / system
+
+保留独立导出，便于外部按类名引用。
+"""
+from .basic import BasicPanel, BasePanel, BitsPanel
+from .scientific import ScientificPanel, MatrixPanel
+from .convert import (
+    UnitPanel, CurrencyPanel, NumberSystemsPanel,
+)
+from .data import (
+    StatsPanel, ProbabilityPanel, BayesianTab,
+    RandomPanel, DataTablePanel, DataOpsPanel,
+)
+from .math import (
+    PlotPanel, Plot3DPanel, PipelinePanel, LatexEditorPanel,
+)
+from .finance import FinancePanel, DatePanel
+from .tools import (
+    CryptoPanel, CryptoAdvancedTab, FileCryptoTab,
+    ToolsPanel, GlyphPanel, SnippetsPanel,
+)
+from .productivity import (
+    TimerPanel, ClipboardHistoryPanel,
+    NotebookPanel, ScriptPanel,
+)
+from .ai import AIPanel, AIChatTab
+from .system import (
+    HistoryPanel, SettingsPanel, ShortcutSettingsPanel,
+)
 
 
 __all__ = [
-    "BasicPanel",
-    "ScientificPanel",
-    "UnitPanel",
-    "CurrencyPanel",
-    "BasePanel",
-    "MatrixPanel",
-    "StatsPanel",
-    "PlotPanel",
-    "Plot3DPanel",
-    "FinancePanel",
-    "DatePanel",
-    "RandomPanel",
-    "ProbabilityPanel",
-    "BitsPanel",
-    "CryptoPanel",
+    # 基础
+    "BasicPanel", "BasePanel", "BitsPanel",
+    # 科学
+    "ScientificPanel", "MatrixPanel",
+    # 转换
+    "UnitPanel", "CurrencyPanel", "NumberSystemsPanel",
+    # 数据
+    "StatsPanel", "ProbabilityPanel", "BayesianTab",
+    "RandomPanel", "DataTablePanel", "DataOpsPanel",
+    # 数学
+    "PlotPanel", "Plot3DPanel", "PipelinePanel",
     "LatexEditorPanel",
-    "HistoryPanel",
-    "SettingsPanel",
-    "DataTablePanel",
-    "ToolsPanel",
-    "SnippetsPanel",
-    "TimerPanel",
-    "ClipboardHistoryPanel",
-    "AIPanel",
-    "ScriptPanel",
+    # 财务
+    "FinancePanel", "DatePanel",
+    # 工具
+    "CryptoPanel", "CryptoAdvancedTab", "FileCryptoTab",
+    "ToolsPanel", "GlyphPanel", "SnippetsPanel",
+    # 生产力
+    "TimerPanel", "ClipboardHistoryPanel",
+    "NotebookPanel", "ScriptPanel",
+    # AI
+    "AIPanel", "AIChatTab",
+    # 系统
+    "HistoryPanel", "SettingsPanel", "ShortcutSettingsPanel",
 ]

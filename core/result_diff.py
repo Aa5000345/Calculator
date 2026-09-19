@@ -7,28 +7,33 @@
 - 表达式的相似度提示："上次你算过 sin(x)"
 
 对外接口：
-    compare(prev, curr, tolerance) -> DiffResult
-    describe(diff, i18n) -> str
+    DiffResult, compare, describe, find_similar_in_history
 """
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
+
+__all__ = [
+    "DiffResult",
+    "compare",
+    "describe",
+    "find_similar_in_history",
+]
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 数据结构
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 @dataclass
 class DiffResult:
     kind: str = "none"          # none / numeric / text / ratio
-    delta: Optional[float] = None
-    ratio: Optional[float] = None      # curr / prev
-    percent: Optional[float] = None    # (ratio - 1) * 100
-    direction: str = ""                # "+" / "-" / "="
+    delta: float | None = None
+    ratio: float | None = None
+    percent: float | None = None
+    direction: str = ""         # "+" / "-" / "="
     prev_repr: str = ""
     curr_repr: str = ""
     detail: str = ""
@@ -38,16 +43,13 @@ class DiffResult:
         return self.kind != "none"
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 数值提取
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 _NUM_RE = re.compile(
     r"^\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*(.*)$"
 )
-
-# 常见单位 / 后缀，用于从 "5 km" 中提取数值和单位
-_UNIT_RE = re.compile(r"^([^\d\s]+)$")
 
 
 def _extract_number(s: Any) -> tuple:
@@ -69,9 +71,9 @@ def _extract_number(s: Any) -> tuple:
     return v, suffix
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 主接口
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def compare(prev: Any, curr: Any,
             tolerance: float = 1e-12) -> DiffResult:
@@ -90,7 +92,6 @@ def compare(prev: Any, curr: Any,
         curr_repr=_short(curr),
     )
 
-    # 边界
     if prev is None or curr is None:
         return out
     if str(prev) == "" or str(curr) == "":
@@ -103,12 +104,10 @@ def compare(prev: Any, curr: Any,
         out.direction = "="
         return out
 
-    # 数值路径
     prev_num, prev_unit = _extract_number(prev)
     curr_num, curr_unit = _extract_number(curr)
 
     if prev_num is not None and curr_num is not None:
-        # 单位不一致：只提示
         if prev_unit and curr_unit and prev_unit != curr_unit:
             out.kind = "text"
             out.detail = f"单位不同：{prev_unit} → {curr_unit}"
@@ -141,7 +140,6 @@ def compare(prev: Any, curr: Any,
             out.direction = "-"
         return out
 
-    # 文本路径
     out.kind = "text"
     if prev_unit and curr_unit and prev_unit != curr_unit:
         out.detail = f"单位不同：{prev_unit} → {curr_unit}"
@@ -155,9 +153,22 @@ def _short(x: Any, n: int = 24) -> str:
     return s[:n - 1] + "…"
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 描述
-# ---------------------------------------------------------------------------
+# ===========================================================================
+
+def _t(key: str, default: str, i18n=None) -> str:
+    """内部辅助：优先使用 i18n 翻译。"""
+    if i18n is None:
+        return default
+    try:
+        v = i18n.t(key, None)
+        if v and v != key:
+            return v
+    except Exception:
+        pass
+    return default
+
 
 def describe(diff: DiffResult, i18n=None) -> str:
     """把 DiffResult 渲染为一行文本。
@@ -178,7 +189,6 @@ def describe(diff: DiffResult, i18n=None) -> str:
     if d is None:
         return ""
 
-    # 差值格式化
     if d == 0:
         delta_text = _t("diff_same", "相同", i18n)
     else:
@@ -191,7 +201,6 @@ def describe(diff: DiffResult, i18n=None) -> str:
         else:
             delta_text = f"{sign}{absd:g}"
 
-    # 百分比
     if diff.percent is not None and abs(diff.percent) >= 0.01:
         pct = diff.percent
         sign_p = "+" if pct > 0 else "-"
@@ -202,28 +211,16 @@ def describe(diff: DiffResult, i18n=None) -> str:
     return f"{delta_text}{pct_text}"
 
 
-def _t(key: str, default: str, i18n=None) -> str:
-    if i18n is None:
-        return default
-    try:
-        v = i18n.t(key, None)
-        if v and v != key:
-            return v
-    except Exception:
-        pass
-    return default
-
-
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 与历史对比
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def find_similar_in_history(curr: str,
                             history_exprs: list,
-                            threshold: float = 0.6) -> Optional[str]:
+                            threshold: float = 0.6) -> str | None:
     """在历史里找与 curr 相似度最高的表达式。
 
-    简单 token 重叠度算法（不需要 difflib 也可）。
+    简单 token 重叠度算法。
     """
     if not curr or not history_exprs:
         return None
@@ -251,11 +248,3 @@ def find_similar_in_history(curr: str,
             best_score = score
             best = h
     return best
-
-
-__all__ = [
-    "DiffResult",
-    "compare",
-    "describe",
-    "find_similar_in_history",
-]

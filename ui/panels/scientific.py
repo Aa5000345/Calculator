@@ -1,11 +1,28 @@
-"""科学计算 / 微积分面板：变量 / ODE / 数值积分 / 优化 + 实时预览。
+"""科学计算 / 微积分 / 矩阵面板。
 
-变更历史：
-- 第 3 轮：primary_input / Ctrl+Z / push_undo
-- 第 6 轮：LaTeX 检测（looks_like_latex）
-- 第 9 轮：SuggestionBubble
-- 第 13 轮：InputHistoryButton
-- 第 17 轮：DiffBadge（在 ResultView 内部自动生效）
+合并自：ui/panels/scientific.py + ui/panels/matrix.py
+
+对外接口（类名保持不变，老 registry.py 无需改动）：
+    ScientificPanel
+    MatrixPanel
+
+依赖（合并后）：
+    core.base    —— log_exc
+    core.engine  —— sci_* / matrix_* / constants / format_result
+    core.state   —— symbols（用户变量 / 函数）
+    ui.shortcuts —— install_panel_shortcuts
+    ui.panels.base    —— CalcPanel
+    ui.panels._common —— ResultView / InlinePreviewBar /
+                          friendly_error
+
+修复记录（本轮）：
+- ScientificPanel：`head.addWidget(self.make_kb_button())` 原在
+  `self.form.addRow(self.expr_label, head)` **之后**——已移到之前，
+  避免浮动键盘按钮跑到表单外。
+- `from core import constants as const_mod` → 直接用 `engine`
+  （constants 已合并到 engine）。
+- `from core import symbols as sym_mod` → `from core import state as state_mod`。
+- `from ui.widgets.input_history_widget import ...` → `ui.widgets.input`。
 """
 from __future__ import annotations
 
@@ -17,24 +34,37 @@ import sympy as sp
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
-    QHBoxLayout, QComboBox, QCheckBox, QSpinBox, QFormLayout,
-    QInputDialog, QTabWidget, QWidget, QTableWidget,
-    QTableWidgetItem, QHeaderView,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout,
+    QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
+    QPlainTextEdit, QPushButton, QSpinBox, QTabWidget,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from core import engine
-from core import constants as const_mod
-from core import symbols as sym_mod
-from core.logger import log_exc
+from core import state as state_mod
+from core.base import log_exc
 from ui.shortcuts import install_panel_shortcuts
 from ._common import (
-    ResultView, friendly_error, InlinePreviewBar,
+    ResultView,
+    friendly_error,
+    InlinePreviewBar,
 )
 from .base import CalcPanel
 
 
+__all__ = ["ScientificPanel", "MatrixPanel"]
+
+
+# ===========================================================================
+# 科学计算 / 微积分
+# ===========================================================================
+
 class ScientificPanel(CalcPanel):
+    """科学计算 / 微积分面板。
+
+    变量 / ODE / 数值积分 / 优化 + 实时预览。
+    """
+
     module_key = "scientific"
 
     OP_FIELDS = {
@@ -80,7 +110,8 @@ class ScientificPanel(CalcPanel):
 
         # ---------------- 输入框 ----------------
         self.expr = QLineEdit(
-            settings.get_draft("sci_expr", "sin(x)*exp(-x)"))
+            settings.get_draft(
+                "sci_expr", "sin(x)*exp(-x)"))
         self.expr.textChanged.connect(
             lambda t: settings.set_draft("sci_expr", t))
         self.expr.returnPressed.connect(self.calc)
@@ -96,7 +127,8 @@ class ScientificPanel(CalcPanel):
         # ---------------- 参数 ----------------
         self.var = QLineEdit("x")
         self.vars = QLineEdit("x, y")
-        self.equations = QPlainTextEdit("x + y = 3\nx - y = 1")
+        self.equations = QPlainTextEdit(
+            "x + y = 3\nx - y = 1")
         self.equations.setFixedHeight(80)
         self.order = QSpinBox()
         self.order.setRange(1, 30)
@@ -112,7 +144,8 @@ class ScientificPanel(CalcPanel):
         self.series_kind = QComboBox()
         for k in ("taylor", "fps", "laurent", "asin", "acos",
                   "atan", "log", "exp"):
-            self.series_kind.addItem(i18n.t(f"series_{k}", k), k)
+            self.series_kind.addItem(
+                i18n.t(f"series_{k}", k), k)
 
         self.func_name = QLineEdit("y")
         self.ics = QLineEdit("")
@@ -123,7 +156,8 @@ class ScientificPanel(CalcPanel):
                   "L-BFGS-B", "TNC", "COBYLA"):
             self.opt_method.addItem(m, m)
         self.lp_params = QPlainTextEdit(
-            '{"c":[1,2],"A_ub":[[1,1],[1,-1]],"b_ub":[10,2]}')
+            '{"c":[1,2],"A_ub":[[1,1],[1,-1]],'
+            '"b_ub":[10,2]}')
         self.lp_params.setFixedHeight(90)
 
         self.show_steps = QCheckBox(
@@ -138,14 +172,12 @@ class ScientificPanel(CalcPanel):
         self.form = QFormLayout()
         self.form.setLabelAlignment(Qt.AlignRight)
 
+        # ---- 输入行：expr + history + const + kb（顺序固定）----
         head = QHBoxLayout()
         head.addWidget(self.expr, 1)
 
-        # 输入历史按钮（第 13 轮）
         try:
-            from ui.widgets.input_history_widget import (
-                InputHistoryButton,
-            )
+            from ui.widgets.input import InputHistoryButton
             self.history_btn = InputHistoryButton(
                 settings, i18n, "scientific.expr", self)
             self.history_btn.attach(self.expr)
@@ -154,13 +186,15 @@ class ScientificPanel(CalcPanel):
             self.history_btn = None
 
         head.addWidget(self.const_btn)
-        self.form.addRow(self.expr_label, head)
         head.addWidget(self.make_kb_button())
+
+        self.form.addRow(self.expr_label, head)
         self.form.addRow(QLabel(i18n.t("operation")), self.op)
 
         self._rows = {}
         self._add_row("var", QLabel(i18n.t("variable")), self.var)
-        self._add_row("vars", QLabel(i18n.t("vars", "Variables")),
+        self._add_row("vars",
+                      QLabel(i18n.t("vars", "Variables")),
                       self.vars)
         self._add_row("equations",
                       QLabel(i18n.t("equations", "Equations")),
@@ -199,7 +233,8 @@ class ScientificPanel(CalcPanel):
         self.calc_btn.setMinimumHeight(36)
         self.calc_btn.clicked.connect(self.calc)
 
-        self.cancel_btn = QPushButton(i18n.t("cancel", "Cancel"))
+        self.cancel_btn = QPushButton(
+            i18n.t("cancel", "Cancel"))
         self.cancel_btn.setEnabled(False)
 
         row = QHBoxLayout()
@@ -207,7 +242,8 @@ class ScientificPanel(CalcPanel):
         row.addWidget(self.cancel_btn)
 
         # ---------------- 实时预览 ----------------
-        self.preview = InlinePreviewBar(calc_fn=self._preview_calc)
+        self.preview = InlinePreviewBar(
+            calc_fn=self._preview_calc)
         self.preview.attach(
             self.expr,
             enabled_getter=lambda: bool(
@@ -217,7 +253,8 @@ class ScientificPanel(CalcPanel):
 
         # ---------------- Tab ----------------
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.result, i18n.t("result", "结果"))
+        self.tabs.addTab(self.result,
+                         i18n.t("result", "结果"))
         self.tabs.addTab(self._build_var_tab(),
                          i18n.t("variables", "变量"))
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -246,11 +283,9 @@ class ScientificPanel(CalcPanel):
         sc_undo.activated.connect(self.undo)
         self._undo_sc = sc_undo
 
-        # ---------------- 智能建议（第 9 轮） ----------------
+        # ---------------- 智能建议 ----------------
         try:
-            from ui.widgets.suggestion_widget import (
-                SuggestionBubble,
-            )
+            from ui.widgets.input import SuggestionBubble
             self.suggest_bubble = SuggestionBubble(
                 settings, i18n, self)
             self.suggest_bubble.attach(
@@ -269,7 +304,8 @@ class ScientificPanel(CalcPanel):
 
     def _angle_mode(self) -> str:
         try:
-            return self.settings.get("angle_mode", "RAD") or "RAD"
+            return self.settings.get(
+                "angle_mode", "RAD") or "RAD"
         except Exception:
             return "RAD"
 
@@ -288,7 +324,8 @@ class ScientificPanel(CalcPanel):
         v = QVBoxLayout(w)
         v.addWidget(QLabel(self.i18n.t(
             "var_hint",
-            "在表达式框输入  x = 5  或  f(x) = x^2 + 1  即可定义")))
+            "在表达式框输入  x = 5  或  f(x) = x^2 + 1  "
+            "即可定义")))
         self.var_table = QTableWidget(0, 3)
         self.var_table.setHorizontalHeaderLabels(
             [self.i18n.t("name", "名称"),
@@ -312,8 +349,8 @@ class ScientificPanel(CalcPanel):
         return w
 
     def _refresh_vars(self):
-        items = sym_mod.get_all()
-        raw = sym_mod.get_raw()
+        items = state_mod.get_all()
+        raw = state_mod.get_raw()
         self.var_table.setRowCount(0)
         for name, val in items.items():
             r = self.var_table.rowCount()
@@ -347,11 +384,11 @@ class ScientificPanel(CalcPanel):
             log_exc(e, module="ScientificPanel._insert_var")
 
     def _delete_var(self, name):
-        sym_mod.delete_symbol(name)
+        state_mod.delete_symbol(name)
         self._refresh_vars()
 
     def _clear_vars(self):
-        sym_mod.clear()
+        state_mod.clear_symbols()
         self._refresh_vars()
 
     def _on_tab_changed(self, idx):
@@ -384,7 +421,7 @@ class ScientificPanel(CalcPanel):
 
     def _pick_constant(self):
         try:
-            allc = const_mod.all_constants()
+            allc = engine.all_constants()
             items = [f"{k} = {v[0]}  ({v[3]})"
                      for k, v in sorted(allc.items())]
             text, ok = QInputDialog.getItem(
@@ -427,7 +464,7 @@ class ScientificPanel(CalcPanel):
 
     def _send_to_plot(self, expr: str):
         try:
-            from ui.signals import bus
+            from ui.shell import bus
             bus().send_to_plot.emit(expr)
         except Exception:
             pass
@@ -438,7 +475,8 @@ class ScientificPanel(CalcPanel):
             switch = getattr(mw, "_switch_by_key_pub", None)
             if callable(switch):
                 switch("pipeline")
-            panel = getattr(mw, "_panels", {}).get("pipeline")
+            panels = getattr(mw, "_panels", {})
+            panel = panels.get("pipeline")
             if panel is not None:
                 w = getattr(panel, "primary_input", None)
                 if w is not None and hasattr(w, "setText"):
@@ -462,9 +500,9 @@ class ScientificPanel(CalcPanel):
         op = self.op.currentData()
         expr = self.expr.text()
 
-        # LaTeX 检测（第 6 轮）
+        # LaTeX 检测
         try:
-            from core import latex_parser as lp
+            from core import latex as lp
             if lp.looks_like_latex(expr):
                 r = lp.latex_to_expr(expr)
                 if r.ok and r.expr:
@@ -538,7 +576,8 @@ class ScientificPanel(CalcPanel):
                 self.equations.toPlainText(),
                 self.vars.text())
         if op == "diff":
-            return engine.sci_diff(expr, var, self.order.value())
+            return engine.sci_diff(
+                expr, var, self.order.value())
         if op == "integrate":
             return engine.sci_integrate(
                 expr, var,
@@ -611,7 +650,7 @@ class ScientificPanel(CalcPanel):
         op = self.op.currentData()
         expr = self.expr.text()
 
-        if sym_mod.match_assignment(expr.strip()):
+        if state_mod.match_assignment(expr.strip()):
             self._refresh_vars()
 
         hint = self._special_hints(op, r)
@@ -654,8 +693,8 @@ class ScientificPanel(CalcPanel):
         if self._calc_start is not None:
             elapsed = time.time() - self._calc_start
 
-        self.result.show_result(text, latex, steps=extra_steps,
-                                elapsed=elapsed)
+        self.result.show_result(
+            text, latex, steps=extra_steps, elapsed=elapsed)
         self.add_history(f"{op}:{expr}", text,
                          module="scientific")
 
@@ -681,4 +720,464 @@ class ScientificPanel(CalcPanel):
             pass
 
 
-__all__ = ["ScientificPanel"]
+# ===========================================================================
+# 矩阵
+# ===========================================================================
+
+class MatrixPanel(CalcPanel):
+    """矩阵面板。
+
+    18 种一元操作 + 7 种二元操作。
+    """
+
+    module_key = "matrix"
+
+    UNARY = ["det", "inv", "transpose", "trace", "rank", "rref",
+             "eigenvals", "eigenvects", "charpoly", "adjugate",
+             "nullspace", "columnspace", "rowspace", "lu", "qr",
+             "exp", "norm", "power"]
+    BINARY = ["mat_add", "mat_sub", "mat_mul", "mat_hadamard",
+              "mat_kron", "mat_solve", "mat_lstsq"]
+
+    PREVIEW_MAX_DIM = 3
+
+    def __init__(self, settings, i18n, history):
+        super().__init__(settings, i18n, history)
+        self._updating = False
+
+        # ---------------- A ----------------
+        self.a_rows = QSpinBox()
+        self.a_rows.setRange(1, 15)
+        self.a_rows.setValue(2)
+        self.a_cols = QSpinBox()
+        self.a_cols.setRange(1, 15)
+        self.a_cols.setValue(2)
+        self.a_table = QTableWidget(2, 2)
+        self.a_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch)
+        self.a_table.verticalHeader().setSectionResizeMode(
+            QHeaderView.Stretch)
+        self._rebuild_table(self.a_table, 2, 2,
+                            [["1", "2"], ["3", "4"]])
+        self.a_rows.valueChanged.connect(
+            lambda _: self._rebuild_table(
+                self.a_table, self.a_rows.value(),
+                self.a_cols.value()))
+        self.a_cols.valueChanged.connect(
+            lambda _: self._rebuild_table(
+                self.a_table, self.a_rows.value(),
+                self.a_cols.value()))
+
+        # ---------------- B ----------------
+        self.b_rows = QSpinBox()
+        self.b_rows.setRange(1, 15)
+        self.b_rows.setValue(2)
+        self.b_cols = QSpinBox()
+        self.b_cols.setRange(1, 15)
+        self.b_cols.setValue(2)
+        self.b_table = QTableWidget(2, 2)
+        self.b_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch)
+        self.b_table.verticalHeader().setSectionResizeMode(
+            QHeaderView.Stretch)
+        self._rebuild_table(self.b_table, 2, 2,
+                            [["5", "6"], ["7", "8"]])
+        self.b_rows.valueChanged.connect(
+            lambda _: self._rebuild_table(
+                self.b_table, self.b_rows.value(),
+                self.b_cols.value()))
+        self.b_cols.valueChanged.connect(
+            lambda _: self._rebuild_table(
+                self.b_table, self.b_rows.value(),
+                self.b_cols.value()))
+
+        # ---------------- 操作 ----------------
+        self.op = QComboBox()
+        for k in self.UNARY:
+            self.op.addItem(i18n.t(f"mat_{k}", k), k)
+        self.op.insertSeparator(self.op.count())
+        for k in self.BINARY:
+            self.op.addItem(i18n.t(f"mat_{k}", k), k)
+        self.op.currentIndexChanged.connect(self._update_params)
+
+        self.scalar = QLineEdit("2")
+        self.scalar_row_widget = QWidget()
+        sr = QHBoxLayout(self.scalar_row_widget)
+        sr.setContentsMargins(0, 0, 0, 0)
+        sr.addWidget(QLabel(
+            i18n.t("scalar", "Scalar / Power")))
+        sr.addWidget(self.scalar, 1)
+
+        self.fmt = QComboBox()
+        self.fmt.addItems(["text", "unicode", "latex"])
+        self.fmt.setCurrentText(
+            settings.get("result_format", "text"))
+        self.show_steps = QCheckBox(
+            i18n.t("show_steps", "Show steps"))
+
+        # ---------------- 随机矩阵 ----------------
+        self.rnd_rows = QSpinBox()
+        self.rnd_rows.setRange(1, 15)
+        self.rnd_rows.setValue(3)
+        self.rnd_cols = QSpinBox()
+        self.rnd_cols.setRange(1, 15)
+        self.rnd_cols.setValue(3)
+        self.rnd_low = QLineEdit("-9")
+        self.rnd_high = QLineEdit("9")
+        self.rnd_kind = QComboBox()
+        self.rnd_kind.addItems(["int", "float", "sym"])
+        b_rand = QPushButton(
+            i18n.t("random_matrix", "Random A"))
+        b_rand.clicked.connect(self._random_a)
+
+        b_csv_in_a = QPushButton(
+            i18n.t("import_csv", "Import A (CSV)"))
+        b_csv_in_a.clicked.connect(
+            lambda: self._import_csv(self.a_table))
+        b_csv_out_a = QPushButton(
+            i18n.t("export_csv", "Export A (CSV)"))
+        b_csv_out_a.clicked.connect(
+            lambda: self._export_csv(self.a_table))
+        b_csv_in_b = QPushButton(
+            i18n.t("import_csv", "Import B (CSV)"))
+        b_csv_in_b.clicked.connect(
+            lambda: self._import_csv(self.b_table))
+        b_csv_out_b = QPushButton(
+            i18n.t("export_csv", "Export B (CSV)"))
+        b_csv_out_b.clicked.connect(
+            lambda: self._export_csv(self.b_table))
+
+        # ---------------- 方程组 ----------------
+        self.solver_A = QPlainTextEdit("1 2\n3 4")
+        self.solver_A.setFixedHeight(80)
+        self.solver_b = QLineEdit("5, 6")
+        b_solve = QPushButton(
+            i18n.t("solve_linear", "Solve Ax=b"))
+        b_solve.clicked.connect(self._solve_linear)
+
+        # ---------------- 主按钮 ----------------
+        btn = QPushButton(i18n.t("calc"))
+        btn.setMinimumHeight(36)
+        btn.clicked.connect(self.calc)
+        self.result = ResultView(i18n)
+
+        # ---------------- 幂预览 ----------------
+        self._power_preview = InlinePreviewBar(
+            calc_fn=self._preview_power)
+        self._power_preview.attach(
+            self.scalar, enabled_getter=lambda: True)
+        self.a_table.itemChanged.connect(
+            lambda _: self._power_preview.refresh(
+                self.scalar.text()))
+        self.a_rows.valueChanged.connect(
+            lambda _: self._power_preview.refresh(
+                self.scalar.text()))
+        self.a_cols.valueChanged.connect(
+            lambda _: self._power_preview.refresh(
+                self.scalar.text()))
+
+        # ---------------- B 编辑器 ----------------
+        self.b_editor = QWidget()
+        be = QVBoxLayout(self.b_editor)
+        be.setContentsMargins(0, 0, 0, 0)
+        be.addWidget(QLabel(
+            i18n.t("matrix_b", "Matrix B")))
+        b_head = QHBoxLayout()
+        b_head.addWidget(QLabel("Rows"))
+        b_head.addWidget(self.b_rows)
+        b_head.addWidget(QLabel("Cols"))
+        b_head.addWidget(self.b_cols)
+        b_head.addStretch(1)
+        be.addLayout(b_head)
+        be.addWidget(self.b_table)
+
+        editor = QWidget()
+        ev = QVBoxLayout(editor)
+        ev.addWidget(QLabel(
+            i18n.t("matrix_a", "Matrix A")))
+        a_head = QHBoxLayout()
+        a_head.addWidget(QLabel("Rows"))
+        a_head.addWidget(self.a_rows)
+        a_head.addWidget(QLabel("Cols"))
+        a_head.addWidget(self.a_cols)
+        a_head.addStretch(1)
+        ev.addLayout(a_head)
+        ev.addWidget(self.a_table)
+        ev.addWidget(self.b_editor)
+
+        csv_row = QHBoxLayout()
+        for b in (b_csv_in_a, b_csv_out_a,
+                  b_csv_in_b, b_csv_out_b):
+            csv_row.addWidget(b)
+        csv_row.addStretch(1)
+
+        rnd_row = QHBoxLayout()
+        rnd_row.addWidget(QLabel("Rows"))
+        rnd_row.addWidget(self.rnd_rows)
+        rnd_row.addWidget(QLabel("Cols"))
+        rnd_row.addWidget(self.rnd_cols)
+        rnd_row.addWidget(QLabel("Low"))
+        rnd_row.addWidget(self.rnd_low)
+        rnd_row.addWidget(QLabel("High"))
+        rnd_row.addWidget(self.rnd_high)
+        rnd_row.addWidget(self.rnd_kind)
+        rnd_row.addWidget(b_rand)
+        rnd_row.addStretch(1)
+
+        op_row = QFormLayout()
+        op_row.setLabelAlignment(Qt.AlignRight)
+        op_row.addRow(QLabel(i18n.t("operation")), self.op)
+        op_row.addRow(QLabel(""), self.scalar_row_widget)
+        op_row.addRow(QLabel(""), self._power_preview)
+        op_row.addRow(QLabel(i18n.t("result_format")),
+                      self.fmt)
+        op_row.addRow(QLabel(""), self.show_steps)
+
+        solver = QWidget()
+        sv = QVBoxLayout(solver)
+        sv.addWidget(QLabel(
+            "A (每行一个，逗号/空格分隔)"))
+        sv.addWidget(self.solver_A)
+        sv.addWidget(QLabel("b (逗号分隔)"))
+        sv.addWidget(self.solver_b)
+        sv.addWidget(b_solve)
+        sv.addStretch(1)
+
+        tabs = QTabWidget()
+        w1 = QWidget()
+        v1 = QVBoxLayout(w1)
+        v1.addWidget(editor)
+        v1.addLayout(csv_row)
+        v1.addLayout(rnd_row)
+        tabs.addTab(w1, i18n.t("editor", "Editor"))
+
+        w2 = QWidget()
+        v2 = QVBoxLayout(w2)
+        v2.addLayout(op_row)
+        v2.addWidget(btn)
+        v2.addStretch(1)
+        tabs.addTab(w2, i18n.t("operation", "Op"))
+
+        tabs.addTab(solver, i18n.t("solver", "Solver"))
+
+        main = QVBoxLayout(self)
+        main.addWidget(tabs, 1)
+        main.addWidget(self.result, 2)
+
+        self._update_params()
+
+    # ==================================================================
+    # 幂预览
+    # ==================================================================
+
+    def _preview_power(self, _text):
+        try:
+            if self.op.currentData() != "power":
+                return None
+            n_txt = self.scalar.text().strip()
+            if not n_txt:
+                return None
+            n = int(n_txt)
+
+            rows = self.a_table.rowCount()
+            cols = self.a_table.columnCount()
+            if rows != cols:
+                return f"A^{n}：非方阵，无法计算"
+
+            if rows > self.PREVIEW_MAX_DIM:
+                return f"A^{n}  ({rows}×{cols})"
+
+            a_text = self._table_to_text(self.a_table)
+            r = engine.matrix_unary("power", a_text, str(n))
+            cells = []
+            for i in range(r.rows):
+                row = ", ".join(str(r[i, j])
+                                for j in range(r.cols))
+                cells.append(f"[{row}]")
+            return f"A^{n} = " + "  ".join(cells)
+        except Exception:
+            return None
+
+    # ==================================================================
+    # 表格管理
+    # ==================================================================
+
+    def _rebuild_table(self, table, rows, cols, init=None):
+        if self._updating:
+            return
+        self._updating = True
+        try:
+            old = self._table_data(table)
+            table.setRowCount(int(rows))
+            table.setColumnCount(int(cols))
+            for i in range(int(rows)):
+                for j in range(int(cols)):
+                    if (init is not None and i < len(init)
+                            and j < len(init[i])):
+                        val = init[i][j]
+                    elif i < len(old) and j < len(old[i]):
+                        val = old[i][j]
+                    else:
+                        val = "0"
+                    table.setItem(
+                        i, j, QTableWidgetItem(str(val)))
+        finally:
+            self._updating = False
+
+    def _table_data(self, table):
+        out = []
+        for i in range(table.rowCount()):
+            row = []
+            for j in range(table.columnCount()):
+                it = table.item(i, j)
+                row.append(it.text() if it else "0")
+            out.append(row)
+        return out
+
+    def _table_to_text(self, table):
+        rows = self._table_data(table)
+        return ("[" + ",".join(
+            "[" + ",".join(r) + "]" for r in rows) + "]")
+
+    # ==================================================================
+    # 随机 / CSV
+    # ==================================================================
+
+    def _random_a(self):
+        try:
+            A = engine.matrix_random(
+                self.rnd_rows.value(), self.rnd_cols.value(),
+                self.rnd_kind.currentText(),
+                self.rnd_low.text(), self.rnd_high.text())
+            self.a_rows.setValue(A.rows)
+            self.a_cols.setValue(A.cols)
+            self._rebuild_table(
+                self.a_table, A.rows, A.cols,
+                [[str(A[i, j]) for j in range(A.cols)]
+                 for i in range(A.rows)])
+        except Exception as e:
+            log_exc(e, module="MatrixPanel._random_a")
+
+    def _import_csv(self, table):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import CSV", "",
+            "CSV (*.csv);;Text (*.txt)")
+        if not path:
+            return
+        try:
+            with open(path, "r",
+                      encoding="utf-8-sig") as f:
+                text = f.read()
+            A = engine.matrix_from_csv_text(text)
+            if table is self.a_table:
+                self.a_rows.setValue(A.rows)
+                self.a_cols.setValue(A.cols)
+            else:
+                self.b_rows.setValue(A.rows)
+                self.b_cols.setValue(A.cols)
+            self._rebuild_table(
+                table, A.rows, A.cols,
+                [[str(A[i, j]) for j in range(A.cols)]
+                 for i in range(A.rows)])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", str(e))
+
+    def _export_csv(self, table):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", "matrix.csv",
+            "CSV (*.csv)")
+        if not path:
+            return
+        try:
+            text = engine.matrix_to_csv_text(
+                engine._parse_matrix(
+                    self._table_to_text(table)))
+            with open(path, "w", encoding="utf-8-sig",
+                      newline="") as f:
+                f.write(text)
+            QMessageBox.information(self, "OK", path)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", str(e))
+
+    # ==================================================================
+    # 参数显隐
+    # ==================================================================
+
+    def _update_params(self, *_):
+        op = self.op.currentData()
+        is_binary = op in self.BINARY
+        is_power = (op == "power")
+        try:
+            self.b_editor.setVisible(is_binary)
+            self.scalar_row_widget.setVisible(is_power)
+            self._power_preview.refresh(self.scalar.text())
+        except Exception:
+            pass
+
+    def _classify_error(self, e):
+        msg = str(e)
+        low = msg.lower()
+        if "奇异" in msg or "singular" in low or "det" in low:
+            return self.i18n.t("err_singular",
+                               "Matrix is singular")
+        if "非方阵" in msg or "square" in low:
+            return self.i18n.t("err_not_square",
+                               "Not a square matrix")
+        if "维度" in msg or "dim" in low or "shape" in low:
+            return self.i18n.t("err_dim_mismatch",
+                               "Dimension mismatch")
+        if "空" in msg or "empty" in low:
+            return self.i18n.t("err_matrix_empty",
+                               "Empty matrix")
+        return friendly_error(self.i18n, e, "matrix")
+
+    def _solve_linear(self):
+        try:
+            A_text = self.solver_A.toPlainText()
+            b_text = self.solver_b.text()
+            sol, steps = engine.matrix_solve_linear(
+                A_text, b_text)
+            text = "\n".join(steps) + "\n\n" + str(sol)
+            self.result.show_result(text, "")
+            self.add_history(
+                f"A={A_text[:60]}...", text,
+                module="matrix-solve")
+        except Exception as e:
+            self.result.show_result(
+                self._classify_error(e), "")
+
+    # ==================================================================
+    # 计算
+    # ==================================================================
+
+    def calc(self):
+        op = self.op.currentData()
+        try:
+            a_text = self._table_to_text(self.a_table)
+            if op in self.BINARY:
+                b_text = self._table_to_text(self.b_table)
+                r = engine.matrix_binary(op, a_text, b_text)
+            elif op == "inv" and self.show_steps.isChecked():
+                r, steps = engine.matrix_inv_steps(a_text)
+                text = ("\n".join(steps) + "\n\n"
+                        + engine.format_result(r, "unicode"))
+                latex = engine.format_result(r, "latex")
+                self.result.show_result(text, latex)
+                self.add_history(f"{op}:{a_text}", text,
+                                 module="matrix")
+                return
+            else:
+                scalar = (self.scalar.text()
+                          if op == "power" else None)
+                r = engine.matrix_unary(op, a_text, scalar)
+
+            fmt = self.fmt.currentText()
+            text = engine.format_result(
+                r, "unicode" if fmt == "text" else fmt)
+            latex = engine.format_result(r, "latex")
+            self.result.show_result(text, latex)
+            self.add_history(f"{op}:{a_text}", text,
+                             module="matrix")
+        except Exception as e:
+            self.result.show_result(
+                self._classify_error(e), "")

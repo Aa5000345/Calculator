@@ -1,17 +1,18 @@
-"""面板共享工具：错误展示、异步执行、布局清理、统一 ResultView、
-InlinePreviewBar（实时预览）、内联校验辅助、差异徽章集成。
+"""面板共享工具：错误展示 / 异步执行 / 布局清理 / 统一 ResultView /
+InlinePreviewBar（实时预览）/ 内联校验 / 差异徽章集成。
 
-变更历史：
-- 第 1 轮：初版
-- 第 2 轮：
-  - InlinePreviewBar 关键词改用 \b 词边界正则
-  - ResultView._show_context_menu 去掉重复 a_json 行
-  - 新增「在新分屏打开」菜单项
-- 第 3 轮：
-  - 集成错误分级（通过 core.errors）
-  - run_async 增强
-- 第 17 轮：
-  - ResultView 集成 DiffBadge，自动对比上次结果
+依赖（合并后）：
+    core.base      —— CalcError / log_exc / log_path
+    core.runtime   —— Worker
+    core.share     —— render_share_card（分享卡片）
+    ui.dialogs     —— LatexLabel
+    ui.shell       —— bus / toast（延迟导入）
+    ui.widgets.input —— DiffBadge（延迟导入）
+
+对外接口：
+    _clear_layout, friendly_error, run_async,
+    mark_field_error, clear_field_error,
+    InlinePreviewBar, CollapsibleGroup, ResultView
 """
 from __future__ import annotations
 
@@ -24,15 +25,15 @@ from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QTimer,
 )
 from PySide6.QtWidgets import (
-    QWidget, QPlainTextEdit, QPushButton, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QScrollArea, QMessageBox, QApplication, QLabel,
-    QMenu, QToolButton, QFrame, QGraphicsOpacityEffect,
+    QWidget, QPlainTextEdit, QPushButton, QVBoxLayout,
+    QHBoxLayout, QTabWidget, QScrollArea, QMessageBox,
+    QApplication, QLabel, QMenu, QToolButton, QFrame,
+    QGraphicsOpacityEffect,
 )
 
-from core.errors import CalcError
-from core.logger import log_exc, log_path
-from core.worker import Worker
-from ui.latex_widget import LatexLabel
+from core.base import CalcError, log_exc, log_path
+from core.runtime import Worker
+from ui.dialogs import LatexLabel
 
 
 # =====================================================================
@@ -249,7 +250,8 @@ class CollapsibleGroup(QFrame):
         self._btn.setText(title)
         self._btn.setCheckable(True)
         self._btn.setChecked(False)
-        self._btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._btn.setToolButtonStyle(
+            Qt.ToolButtonTextBesideIcon)
         self._btn.setArrowType(Qt.RightArrow)
         self._btn.setStyleSheet(
             "QToolButton{border:none;padding:2px;}")
@@ -306,7 +308,7 @@ class ResultView(QWidget):
         self._last_retry = None
         self._anim = None
         self._flash_overlay = None
-        self._prev_text = ""     # 用于差异对比
+        self._prev_text = ""
 
         # ---- 主文本 + LaTeX ----
         self.text = QPlainTextEdit()
@@ -332,9 +334,9 @@ class ResultView(QWidget):
         self.tabs.addTab(self.steps_scroll,
                          i18n.t("steps", "步骤"))
 
-        # ---- 差异徽章（第 17 轮新增） ----
+        # ---- 差异徽章 ----
         try:
-            from ui.widgets.diff_badge import DiffBadge
+            from ui.widgets.input import DiffBadge
             self.diff_badge = DiffBadge(i18n)
         except Exception:
             self.diff_badge = None
@@ -387,7 +389,6 @@ class ResultView(QWidget):
 
     def show_result(self, text, latex="", steps=None, elapsed=None,
                     highlight=True):
-        # 记录上一次的文本（用于差异）
         if self._last_text:
             self._prev_text = self._last_text
 
@@ -405,7 +406,6 @@ class ResultView(QWidget):
         if elapsed is not None:
             self._set_elapsed(elapsed)
 
-        # 差异徽章
         if self.diff_badge is not None:
             try:
                 if self._prev_text and self._last_text:
@@ -419,7 +419,8 @@ class ResultView(QWidget):
         if highlight:
             self._flash()
 
-    def show_error(self, exc, elapsed=None, retry_cb=None, steps=None):
+    def show_error(self, exc, elapsed=None, retry_cb=None,
+                   steps=None):
         msg = friendly_error(self.i18n, exc, "ui")
         self._last_error = msg
         self._last_text = msg
@@ -437,7 +438,6 @@ class ResultView(QWidget):
         if elapsed is not None:
             self._set_elapsed(elapsed)
 
-        # 错误时清空差异徽章
         if self.diff_badge is not None:
             self.diff_badge.clear()
 
@@ -505,7 +505,8 @@ class ResultView(QWidget):
             effect.setOpacity(1.0)
             overlay.setGraphicsEffect(effect)
 
-            anim = QPropertyAnimation(effect, b"opacity", self)
+            anim = QPropertyAnimation(
+                effect, b"opacity", self)
             anim.setDuration(450)
             anim.setStartValue(1.0)
             anim.setEndValue(0.0)
@@ -559,7 +560,6 @@ class ResultView(QWidget):
             i18n.t("send_to_snippet", "保存为片段"))
         a_send_plot = send_menu.addAction(
             i18n.t("send_to_plot", "绘图面板"))
-        # 第 2 轮新增：在新分屏打开
         a_split = send_menu.addAction(
             i18n.t("open_in_split", "在新分屏打开"))
 
@@ -592,21 +592,22 @@ class ResultView(QWidget):
             elif chosen is a_card:
                 self._save_share_card()
             elif chosen is a_send_unit:
-                from ui.signals import bus
+                from ui.shell import bus
                 bus().send_to_unit.emit(self._last_text)
             elif chosen is a_send_sci:
-                from ui.signals import bus
+                from ui.shell import bus
                 bus().send_to_sci.emit(self._last_text)
             elif chosen is a_send_table:
-                from ui.signals import bus
+                from ui.shell import bus
                 bus().send_to_table.emit(self._last_text)
             elif chosen is a_send_snippet:
-                from ui.signals import bus
+                from ui.shell import bus
                 preview = (self._last_text or "").strip().splitlines()
                 name = (preview[0][:30] if preview else "snippet")
-                bus().send_to_snippet.emit(name, self._last_text)
+                bus().send_to_snippet.emit(
+                    name, self._last_text)
             elif chosen is a_send_plot:
-                from ui.signals import bus
+                from ui.shell import bus
                 bus().send_to_plot.emit(self._last_text)
             elif chosen is a_split:
                 self._open_in_split()
@@ -614,9 +615,8 @@ class ResultView(QWidget):
             log_exc(e, module="ResultView._show_context_menu")
 
     def _open_in_split(self):
-        """把当前结果作为表达式发送到科学面板，并在分屏打开。"""
         try:
-            from ui.signals import bus
+            from ui.shell import bus
             w = self.window()
             opener = getattr(w, "open_current_in_split", None)
             if callable(opener):
@@ -646,9 +646,10 @@ class ResultView(QWidget):
         """弹出保存对话框，生成分享卡片 PNG（含二维码）。"""
         try:
             from PySide6.QtWidgets import QFileDialog
-            from core import share_card as sc_mod
+            from core import share as sc_mod
         except Exception as e:
-            log_exc(e, module="ResultView._save_share_card.import")
+            log_exc(e,
+                    module="ResultView._save_share_card.import")
             return
 
         ts = __import__("datetime").datetime.now().strftime(
@@ -660,7 +661,8 @@ class ResultView(QWidget):
         if not path:
             return
 
-        qr_data = (self._last_latex or self._last_text or "").strip()
+        qr_data = (self._last_latex
+                   or self._last_text or "").strip()
         if len(qr_data) > 180:
             qr_data = qr_data[:180]
 
@@ -683,7 +685,7 @@ class ResultView(QWidget):
                 theme="dark",
             )
             try:
-                from ui.toast import toast
+                from ui.shell import toast
                 toast(self.window(), path, level="success")
             except Exception:
                 QMessageBox.information(self, "OK", path)

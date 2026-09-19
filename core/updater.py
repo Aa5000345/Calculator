@@ -1,28 +1,16 @@
 """自动更新：检查 + 下载 + SHA256 校验。
 
-设计：
-- 检查：调用 GitHub Releases API
-- 下载：流式下载 release 里的 asset，可选校验 SHA256
-- 不自动安装（跨平台复杂），下载完成后提示用户手动替换 / 重启
-- 所有网络操作支持超时 + 取消 + 进度回调
-
-默认 feed：
-    https://api.github.com/repos/Aa5000345/Calculator/releases/latest
+合并后依赖：core.base（parse_version / is_newer / Version）
 
 对外接口：
-    check_update(current_version, feed_url, timeout, silent)
-        -> UpdateInfo
-    download_asset(info, dest_dir, progress_cb, cancelled, verify_sha)
-        -> DownloadResult
-    verify_sha256(path, expected_hex) -> bool
-    should_auto_check(settings, interval_days=7) -> bool
-    mark_checked(settings)
-    get_release_asset(info, platform) -> dict | None
+    ReleaseAsset, UpdateInfo, DownloadProgress, DownloadResult,
+    check_update, check_update_legacy, download_asset,
+    verify_sha256, should_auto_check, mark_checked,
+    get_release_asset, detect_platform, DEFAULT_FEED
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import platform as plat_mod
 import re
@@ -30,9 +18,32 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from core import version as ver_mod
-from core.errors import InputError, NetworkError
-from core.logger import log_warn, log_info
+from core.base import (
+    NetworkError,
+    InputError,
+    log_info,
+    log_warn,
+    Version,
+    parse_version,
+    is_newer,
+)
+
+__all__ = [
+    "DEFAULT_FEED",
+    "AUTO_CHECK_INTERVAL_DAYS",
+    "ReleaseAsset",
+    "UpdateInfo",
+    "DownloadProgress",
+    "DownloadResult",
+    "check_update",
+    "check_update_legacy",
+    "download_asset",
+    "verify_sha256",
+    "should_auto_check",
+    "mark_checked",
+    "get_release_asset",
+    "detect_platform",
+]
 
 
 DEFAULT_FEED = (
@@ -42,13 +53,13 @@ DEFAULT_FEED = (
 
 DEFAULT_TIMEOUT = 8.0
 DOWNLOAD_TIMEOUT = 60.0
-CHUNK_SIZE = 1 << 16        # 64 KiB
+CHUNK_SIZE = 1 << 16
 AUTO_CHECK_INTERVAL_DAYS = 7
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 数据结构
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 @dataclass
 class ReleaseAsset:
@@ -56,7 +67,7 @@ class ReleaseAsset:
     url: str
     size: int = 0
     content_type: str = ""
-    sha256: str = ""        # 若 release 提供了 checksum
+    sha256: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -88,8 +99,10 @@ class UpdateInfo:
             "url": self.url,
             "notes": self.notes,
             "published_at": self.published_at,
-            "assets": [a.to_dict() if isinstance(a, ReleaseAsset)
-                       else a for a in self.assets],
+            "assets": [
+                a.to_dict() if isinstance(a, ReleaseAsset) else a
+                for a in self.assets
+            ],
             "error": self.error,
         }
 
@@ -117,19 +130,18 @@ class DownloadResult:
     elapsed: float = 0.0
 
 
-# ---------------------------------------------------------------------------
-# 版本对比（旧接口兼容）
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# 版本对比（旧接口）
+# ===========================================================================
 
-def _parse_version(s: str):
-    """旧接口：返回 tuple，供旧代码使用。"""
-    v = ver_mod.parse(s)
-    return v.to_tuple()
+def _parse_version(s: str) -> tuple:
+    """旧接口：返回 tuple，供老代码使用。"""
+    return parse_version(s).to_tuple()
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 检查更新
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def check_update(current_version: str = "1.0.0",
                  feed_url: str = DEFAULT_FEED,
@@ -195,7 +207,6 @@ def check_update(current_version: str = "1.0.0",
         info.error = "release 缺少 tag_name"
         return info
 
-    # 解析 assets
     for a in info.raw.get("assets") or []:
         if not isinstance(a, dict):
             continue
@@ -207,12 +218,10 @@ def check_update(current_version: str = "1.0.0",
             content_type=str(a.get("content_type") or ""),
         ))
 
-    # 检查是否有 checksum 文件（如 SHA256SUMS.txt）
     _attach_checksums(info)
 
-    # 版本比较
     try:
-        info.has_update = ver_mod.is_newer(tag, current_version)
+        info.has_update = is_newer(tag, current_version)
     except Exception:
         info.has_update = _legacy_compare(tag, current_version)
 
@@ -224,13 +233,9 @@ def check_update(current_version: str = "1.0.0",
 
 
 def _attach_checksums(info: UpdateInfo):
-    """如果 release 里有 SHA256SUMS 文件，尝试下载并附加到 assets。
-
-    不阻塞：失败只记录日志。
-    """
+    """如果 release 里有 SHA256SUMS 文件，尝试下载并附加到 assets。"""
     sum_assets = [a for a in info.assets
-                  if re.search(r"(?i)sha256|checksum",
-                               a.name)]
+                  if re.search(r"(?i)sha256|checksum", a.name)]
     if not sum_assets:
         return
     try:
@@ -240,7 +245,6 @@ def _attach_checksums(info: UpdateInfo):
     except Exception:
         return
 
-    # 解析 "hash  filename" 格式
     mapping = {}
     for line in text.splitlines():
         m = re.match(
@@ -274,9 +278,9 @@ def _legacy_compare(a: str, b: str) -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 平台匹配
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def detect_platform() -> str:
     """返回 ``"windows"`` / ``"macos"`` / ``"linux"``。"""
@@ -288,16 +292,10 @@ def detect_platform() -> str:
     return "linux"
 
 
-def get_release_asset(info: UpdateInfo,
-                      platform: Optional[str] = None) -> Optional[ReleaseAsset]:
-    """选择当前平台最匹配的 asset。
-
-    优先级：
-        1. 平台特定的安装包（windows: .exe / .msi；macos: .dmg / .zip；
-           linux: .AppImage / .deb）
-        2. 通用 .zip
-        3. 第一个非 checksum 文件
-    """
+def get_release_asset(
+        info: UpdateInfo,
+        platform: Optional[str] = None) -> Optional[ReleaseAsset]:
+    """选择当前平台最匹配的 asset。"""
     if not info.assets:
         return None
     plat = platform or detect_platform()
@@ -309,7 +307,7 @@ def get_release_asset(info: UpdateInfo,
     elif plat == "macos":
         patterns = [r"(?i)\.dmg$", r"(?i)mac.*\.zip$",
                     r"(?i)darwin.*\.zip$", r"(?i)\.zip$"]
-    else:  # linux
+    else:
         patterns = [r"(?i)\.AppImage$", r"(?i)\.deb$",
                     r"(?i)linux.*\.zip$", r"(?i)\.zip$"]
 
@@ -322,16 +320,15 @@ def get_release_asset(info: UpdateInfo,
             if re.search(pat, a.name):
                 return a
 
-    # 兜底
     for a in info.assets:
         if not excluded.search(a.name):
             return a
     return None
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 下载
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def download_asset(info: UpdateInfo,
                    dest_dir: str,
@@ -339,19 +336,7 @@ def download_asset(info: UpdateInfo,
                    progress_cb: Optional[Callable] = None,
                    cancelled: Optional[Callable] = None,
                    verify_sha: bool = True) -> DownloadResult:
-    """下载 release asset 到目标目录。
-
-    Args:
-        info: check_update 返回的 UpdateInfo
-        dest_dir: 保存目录（如 ~/.multicalc/updates）
-        platform: 目标平台（默认自动检测）
-        progress_cb: ``fn(DownloadProgress)`` 进度回调
-        cancelled: ``fn() -> bool`` 取消检查
-        verify_sha: 是否校验 SHA256（若 info 里有 sha256）
-
-    Returns:
-        DownloadResult
-    """
+    """下载 release asset 到目标目录。"""
     result = DownloadResult()
     if not info.has_update:
         result.error = "没有可用更新"
@@ -370,8 +355,6 @@ def download_asset(info: UpdateInfo,
 
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, asset.name)
-
-    # 临时文件避免半成品
     tmp_path = dest_path + ".part"
 
     started = time.time()
@@ -416,7 +399,6 @@ def download_asset(info: UpdateInfo,
                             last_ts = now
                             last_done = done
 
-        # 重命名为最终文件
         if os.path.exists(dest_path):
             try:
                 os.remove(dest_path)
@@ -429,7 +411,6 @@ def download_asset(info: UpdateInfo,
         result.sha256 = sha.hexdigest().upper()
         result.elapsed = time.time() - started
 
-        # 校验
         if verify_sha and asset.sha256:
             result.verified = (
                 result.sha256.upper() == asset.sha256.upper())
@@ -487,12 +468,13 @@ def verify_sha256(path: str, expected_hex: str) -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 自动检查节流
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
-def should_auto_check(settings,
-                      interval_days: int = AUTO_CHECK_INTERVAL_DAYS) -> bool:
+def should_auto_check(
+        settings,
+        interval_days: int = AUTO_CHECK_INTERVAL_DAYS) -> bool:
     """判断是否应该自动检查更新（基于上次检查时间）。"""
     if settings is None:
         return False
@@ -519,9 +501,9 @@ def mark_checked(settings):
         pass
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # 旧接口兼容
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def check_update_legacy(current_version: str = "1.0.0",
                         feed_url: str = DEFAULT_FEED,
@@ -530,21 +512,3 @@ def check_update_legacy(current_version: str = "1.0.0",
     info = check_update(current_version, feed_url, timeout,
                         silent=True)
     return info.has_update, info.latest or current_version, info.url
-
-
-__all__ = [
-    "DEFAULT_FEED",
-    "AUTO_CHECK_INTERVAL_DAYS",
-    "ReleaseAsset",
-    "UpdateInfo",
-    "DownloadProgress",
-    "DownloadResult",
-    "check_update",
-    "check_update_legacy",
-    "download_asset",
-    "verify_sha256",
-    "should_auto_check",
-    "mark_checked",
-    "get_release_asset",
-    "detect_platform",
-]

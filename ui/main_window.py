@@ -2,21 +2,18 @@
 """主窗口：侧边栏分组 + 搜索 + 面板切换 + 热重载 + 状态持久化 +
 键盘 / AI / 脚本集成 + 状态栏 + 快捷键提示条 + 快照 + 插件 + 欢迎页。
 
-变更历史：
-- 第 1 轮：初版（25 面板 + 分组 + 搜索 + 热重载 + 分屏）
-- 第 2 轮：CalcStatusBar / _install_hint_bar / primary_input 优先
-- 第 4 轮：reload_shortcuts()
-- 第 5 轮：新增 pipeline 面板
-- 第 6 轮：新增 notebook 面板
-- 第 6.5 轮：新增 number_systems 面板
-- 第 7 轮：新增 glyph 面板
-- 第 9 轮：AI Chat Tab 已内嵌到 ai 面板
-- 第 12 轮：新增 data_ops 面板
-- 第 13 轮：apply_snapshot / 快照保存 / 时间线
-- 第 15 轮：UpdateDialog 集成 + 启动 5s 后自动检查
-- 第 16 轮：PluginManagerDialog 集成 + 插件注册表合并
-- 第 18 轮：快捷键元数据驱动（reload_shortcuts 走 shortcut_meta）
-- 第 19 轮：欢迎页 / 快速导览 / 最近打开
+依赖（合并后）：
+    core.base      —— log_exc / log_info
+    core.state     —— Settings / I18n / History
+    core.engine    —— basic_calc_smart
+    core.plugins   —— load_all
+    core.rates     —— init
+    core.updater   —— check_update / should_auto_check / mark_checked
+    core.user_data —— recent_*, snippet_*, get_snapshot_manager
+    ui.shell       —— bus / CalcStatusBar / SplitView / toast / Tray
+    ui.dialogs     —— CommandPalette / ModuleVisibilityDialog
+    ui.shortcuts   —— install_main_window_shortcuts / reload_...
+    ui.panels.registry —— all_panels
 """
 from __future__ import annotations
 
@@ -25,7 +22,9 @@ import json
 import os
 import re
 
-from PySide6.QtCore import Qt, QTimer, QFileSystemWatcher
+from PySide6.QtCore import (
+    Qt, QTimer, QFileSystemWatcher,
+)
 from PySide6.QtGui import (
     QAction, QGuiApplication, QKeySequence, QShortcut,
 )
@@ -36,20 +35,26 @@ from PySide6.QtWidgets import (
     QMessageBox, QTableWidgetItem, QFrame, QMenu,
 )
 
-from core.logger import log_exc, log_info
-from ui.latex_widget import LatexLabel
-from ui.settings_dialog import ModuleVisibilityDialog
-from ui.shortcuts import install_main_window_shortcuts
-from ui.command_palette import CommandPalette, _fuzzy_score
-from ui.tray import Tray
-from ui.split_view import SplitView
-from ui.signals import bus
-from ui.status_bar import CalcStatusBar
+from core.base import log_exc, log_info
+from core.state import History, I18n, Settings  # noqa: F401
 from core import engine
+from core import rates as rates_mod
 from core import updater as update_mod
 from core import plugins as plugin_mod
-from core import snippets as snip_mod
-from core import recent_files as recent_mod
+from core import user_data as ud
+from ui.dialogs import (
+    CommandPalette,
+    LatexLabel,
+    ModuleVisibilityDialog,
+)
+from ui.shortcuts import install_main_window_shortcuts
+from ui.shell import (
+    CalcStatusBar,
+    SplitView,
+    Tray,
+    bus,
+    toast as _toast,
+)
 from ui.panels.registry import all_panels
 
 
@@ -73,15 +78,16 @@ DEFAULT_GROUPS = [
 
 
 _MODULE_KEY_MAP = {
-    "basic": "basic", "scientific": "scientific", "unit": "unit",
-    "currency": "currency",
-    "base": "base", "ascii": "base", "endian": "base", "ieee": "base",
+    "basic": "basic", "scientific": "scientific",
+    "unit": "unit", "currency": "currency",
+    "base": "base", "ascii": "base", "endian": "base",
+    "ieee": "base",
     "matrix": "matrix", "stats": "stats", "plot": "plot",
     "plot3d": "plot3d", "random": "random", "bits": "bits",
     "latex": "latex", "settings": "settings",
     "data_table": "data_table", "tools": "tools",
-    "snippets": "snippets", "timer": "timer", "script": "script",
-    "ai": "ai",
+    "snippets": "snippets", "timer": "timer",
+    "script": "script", "ai": "ai",
     "clipboard": "clipboard_history",
     "clipboard_history": "clipboard_history",
     "pipeline": "pipeline",
@@ -96,7 +102,8 @@ _MODULE_PREFIX_MAP = (
     ("date-", "date"), ("finance-", "finance"),
     ("stats-", "stats"), ("random-", "random"),
     ("prob-", "probability"), ("bits-", "bits"),
-    ("unit-", "unit"), ("currency-", "currency"), ("matrix-", "matrix"),
+    ("unit-", "unit"), ("currency-", "currency"),
+    ("matrix-", "matrix"),
     ("enc-", "crypto_tools"), ("dec-", "crypto_tools"),
     ("hash-", "crypto_tools"), ("aes-", "crypto_tools"),
     ("rsa-", "crypto_tools"), ("classic-", "crypto_tools"),
@@ -172,7 +179,6 @@ class MainWindow(QMainWindow):
         self._watcher.fileChanged.connect(
             self._on_settings_file_changed)
 
-        # 快捷键
         install_main_window_shortcuts(self)
 
         # 托盘
@@ -183,7 +189,7 @@ class MainWindow(QMainWindow):
         # 菜单
         self._build_menu()
 
-        # 插件（在 UI 构建完毕后加载）
+        # 插件（UI 构建完毕后加载）
         self._load_plugins()
 
         # 键盘 / URL / 状态栏 / 自动检查更新
@@ -192,8 +198,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(300, self._consume_init_expr)
         QTimer.singleShot(500, self._update_status_bar)
         QTimer.singleShot(5000, self._auto_check_update)
-
-        # 首次运行：欢迎页 / 快速导览
         QTimer.singleShot(700, self._maybe_show_welcome)
 
     # ==================================================================
@@ -283,13 +287,15 @@ class MainWindow(QMainWindow):
         self.tree.setHeaderHidden(True)
         self.tree.setDragDropMode(QAbstractItemView.InternalMove)
         self.tree.setDefaultDropAction(Qt.MoveAction)
-        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setSelectionMode(
+            QAbstractItemView.SingleSelection)
         self.tree.setMinimumWidth(180)
         self.tree.setIndentation(14)
         self.tree.setRootIsDecorated(True)
         self.tree.setExpandsOnDoubleClick(False)
         self.tree.itemClicked.connect(self._on_tree_item_clicked)
-        self.tree.model().rowsMoved.connect(self._on_tree_rows_moved)
+        self.tree.model().rowsMoved.connect(
+            self._on_tree_rows_moved)
 
         head = QHBoxLayout()
         head.addWidget(self.toggle)
@@ -320,7 +326,8 @@ class MainWindow(QMainWindow):
                 self._register(spec.key, title, widget,
                                spec.group)
             except Exception as e:
-                log_exc(e, module=f"main_window.register:{spec.key}")
+                log_exc(e,
+                        module=f"main_window.register:{spec.key}")
 
         self._rebuild_tree()
         self._apply_filter("")
@@ -366,7 +373,8 @@ class MainWindow(QMainWindow):
         try:
             if getattr(panel, "_hint_bar_installed", False):
                 return
-            if not hasattr(panel, "layout") or panel.layout() is None:
+            if not hasattr(panel, "layout") \
+                    or panel.layout() is None:
                 return
             bar = QFrame()
             bar.setFrameShape(QFrame.NoFrame)
@@ -469,7 +477,8 @@ class MainWindow(QMainWindow):
                 child = QTreeWidgetItem(
                     [self._titles.get(k, k)])
                 child.setData(0, Qt.UserRole, k)
-                child.setFlags(child.flags() | Qt.ItemIsDragEnabled)
+                child.setFlags(
+                    child.flags() | Qt.ItemIsDragEnabled)
                 parent.addChild(child)
                 self._item_by_key[k] = child
             parent.setExpanded(expanded.get(name, True))
@@ -641,7 +650,7 @@ class MainWindow(QMainWindow):
     def _ensure_keyboard(self):
         if self._keyboard is None:
             try:
-                from ui.widgets.calc_keyboard import CalcKeyboard
+                from ui.widgets.keyboard import CalcKeyboard
                 self._keyboard = CalcKeyboard(
                     self.settings, self.i18n, self)
                 self._keyboard.equals_requested.connect(
@@ -732,7 +741,7 @@ class MainWindow(QMainWindow):
 
     def _on_send_to_snippet(self, name, expr):
         try:
-            snip_mod.add(name or "snippet", expr)
+            ud.snippet_add(name or "snippet", expr)
             self._switch_by_key_pub("snippets")
             panel = self._panels.get("snippets")
             if panel is not None and hasattr(panel, "_reload"):
@@ -809,13 +818,13 @@ class MainWindow(QMainWindow):
                                 "已发送到基础面板"),
                     level="success", duration=1500)
             except Exception as e:
-                log_exc(e, module="MainWindow._on_clipboard_expr._go")
+                log_exc(e,
+                        module="MainWindow._on_clipboard_expr._go")
 
         try:
-            from ui.toast import toast as toast_fn
-            toast_fn(self, f"📋 {preview}",
-                     level="info", duration=3500,
-                     on_click=_go)
+            _toast(self, f"📋 {preview}",
+                   level="info", duration=3500,
+                   on_click=_go)
         except Exception:
             pass
 
@@ -913,7 +922,8 @@ class MainWindow(QMainWindow):
             self._rebuild_tree()
             self._apply_filter(self.search_box.text())
         except Exception as e:
-            log_exc(e, module="main_window._rebuild_tree_and_filter")
+            log_exc(
+                e, module="main_window._rebuild_tree_and_filter")
 
     # ==================================================================
     # 历史复用
@@ -1286,7 +1296,6 @@ class MainWindow(QMainWindow):
         a_new.triggered.connect(self._new_window_via_shortcut)
         m_file.addAction(a_new)
 
-        # 最近打开子菜单
         self._recent_menu = QMenu(
             self.i18n.t("recent_files", "最近打开"), self)
         self._recent_menu.aboutToShow.connect(
@@ -1415,9 +1424,6 @@ class MainWindow(QMainWindow):
         a_welcome.triggered.connect(self._show_welcome)
         m_help.addAction(a_welcome)
 
-        # 所有快捷键（含 F11 / F1 / Ctrl+K）已由
-        # install_main_window_shortcuts 安装，这里不再硬编码
-
     # ==================================================================
     # 最近打开
     # ==================================================================
@@ -1425,7 +1431,7 @@ class MainWindow(QMainWindow):
     def _refresh_recent_menu(self):
         try:
             self._recent_menu.clear()
-            items = recent_mod.list_existing(limit=12)
+            items = ud.recent_list_existing(limit=12)
             if not items:
                 a = self._recent_menu.addAction(
                     self.i18n.t("recent_none", "（暂无）"))
@@ -1451,7 +1457,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self, "Error",
                     self.i18n.t("recent_missing",
-                                "文件不存在：{p}").format(p=path))
+                                "文件不存在：{p}")
+                    .format(p=path))
                 return
             if kind in ("notebook",):
                 self._switch_by_key_pub("notebook")
@@ -1463,10 +1470,9 @@ class MainWindow(QMainWindow):
             elif kind in ("image",):
                 self.open_ocr_input()
             else:
-                # 默认：用系统默认程序打开
                 try:
-                    import sys as _sys
                     import subprocess
+                    import sys as _sys
                     if _sys.platform.startswith("win"):
                         os.startfile(path)  # type: ignore
                     elif _sys.platform == "darwin":
@@ -1480,7 +1486,7 @@ class MainWindow(QMainWindow):
 
     def _clear_recent(self):
         try:
-            recent_mod.clear()
+            ud.recent_clear()
         except Exception:
             pass
 
@@ -1516,7 +1522,6 @@ class MainWindow(QMainWindow):
         cmds.append((self.i18n.t("snapshot_timeline", "时间线…"),
                      self._open_snapshot_dialog_via_shortcut))
 
-        # 主题命令
         for name, info in self.settings.themes().items():
             cmds.append((
                 f"theme: {info.get('label', name)}",
@@ -1524,12 +1529,9 @@ class MainWindow(QMainWindow):
         cmds.append(("theme: system",
                      lambda: self.settings.set("theme", "system")))
 
-        # 插件注册的命令
         try:
-            from core import plugin_registry as reg_mod
-            for c in reg_mod.get_registry().commands():
+            for c in plugin_mod.get_registry().commands():
                 title = c.display_title(self.i18n)
-                # 避免重复
                 if any(title == t for t, _ in cmds):
                     continue
                 cmds.append((
@@ -1595,13 +1597,15 @@ class MainWindow(QMainWindow):
 
     def _palette_history(self, query, limit=10):
         try:
-            return self.history.list(search=query, limit=int(limit))
+            return self.history.list(search=query,
+                                     limit=int(limit))
         except Exception:
             return []
 
     def _palette_calc(self, expr):
         try:
-            angle = self.settings.get("angle_mode", "RAD") or "RAD"
+            angle = self.settings.get(
+                "angle_mode", "RAD") or "RAD"
             return engine.basic_calc_smart(expr, angle)
         except Exception:
             return engine.basic_calc_smart(expr)
@@ -1667,7 +1671,7 @@ class MainWindow(QMainWindow):
 
     def _check_update(self):
         try:
-            from ui.widgets.update_dialog import UpdateDialog
+            from ui.widgets.dialogs import UpdateDialog
             current = self.settings.get("app_version", "1.0.0")
             dlg = UpdateDialog(
                 self.settings, self.i18n, current, self)
@@ -1676,7 +1680,6 @@ class MainWindow(QMainWindow):
             log_exc(e, module="MainWindow._check_update")
 
     def _auto_check_update(self):
-        """启动 5 秒后自动检查（7 天一次）。"""
         try:
             if not update_mod.should_auto_check(self.settings):
                 return
@@ -1694,8 +1697,8 @@ class MainWindow(QMainWindow):
 
     def _show_plugins(self):
         try:
-            from ui.widgets.plugin_manager import (
-                PluginManagerDialog,
+            from ui.widgets.dialogs import (
+            PluginManagerDialog,
             )
             dlg = PluginManagerDialog(
                 self.settings, self.i18n, self.base_path, self)
@@ -1743,16 +1746,15 @@ class MainWindow(QMainWindow):
 
     def show_toast(self, text, level="info", duration=2500):
         try:
-            from ui.toast import toast
-            return toast(self, text, level=level,
-                         duration=duration)
+            return _toast(self, text, level=level,
+                          duration=duration)
         except Exception as e:
             log_exc(e, module="MainWindow.show_toast")
             return None
 
     def _show_shortcuts(self):
         try:
-            from ui.shortcuts_dialog import ShortcutsDialog
+            from ui.dialogs import ShortcutsDialog
             dlg = ShortcutsDialog(
                 self.i18n, self, settings=self.settings)
             dlg.exec()
@@ -1761,7 +1763,7 @@ class MainWindow(QMainWindow):
 
     def _show_tour(self):
         try:
-            from ui.widgets.quick_tour import QuickTour
+            from ui.widgets.dialogs import QuickTour
             dlg = QuickTour(self.i18n, self)
             dlg.exec()
             self.settings.set("tour_done", True)
@@ -1769,9 +1771,9 @@ class MainWindow(QMainWindow):
             log_exc(e, module="MainWindow._show_tour")
 
     def _maybe_show_welcome(self):
-        """首次运行时：显示快速导览，或欢迎页。"""
         try:
-            tour_done = bool(self.settings.get("tour_done", False))
+            tour_done = bool(
+                self.settings.get("tour_done", False))
             if not tour_done:
                 self._show_tour()
                 self.settings.set("tour_done", True)
@@ -1780,15 +1782,13 @@ class MainWindow(QMainWindow):
             welcome_shown = bool(
                 self.settings.get("welcome_shown", False))
             if not welcome_shown:
-                # 不再弹欢迎页（用户已看过导览）
                 self.settings.set("welcome_shown", True)
         except Exception as e:
             log_exc(e, module="MainWindow._maybe_show_welcome")
 
     def _show_welcome(self):
-        """手动打开欢迎页。"""
         try:
-            from ui.widgets.welcome_widget import WelcomeWidget
+            from ui.widgets.dialogs import WelcomeWidget
             w = WelcomeWidget(
                 self.settings, self.i18n, self.base_path, self)
 
@@ -1819,8 +1819,7 @@ class MainWindow(QMainWindow):
 
     def _save_snapshot_via_shortcut(self):
         try:
-            from core import snapshot as snap_mod
-            mgr = snap_mod.get_manager()
+            mgr = ud.get_snapshot_manager()
             ctx = self._collect_snapshot_context()
             snap = mgr.create(context=ctx)
             self.show_toast(
@@ -1829,11 +1828,12 @@ class MainWindow(QMainWindow):
                 .format(title=snap.meta.title),
                 level="success", duration=2200)
         except Exception as e:
-            log_exc(e, module="MainWindow._save_snapshot_via_shortcut")
+            log_exc(
+                e, module="MainWindow._save_snapshot_via_shortcut")
 
     def _open_snapshot_dialog_via_shortcut(self):
         try:
-            from ui.widgets.snapshot_dialog import SnapshotDialog
+            from ui.widgets.dialogs import SnapshotDialog
             dlg = SnapshotDialog(
                 self.settings, self.i18n, self)
             dlg.exec()
@@ -1843,19 +1843,17 @@ class MainWindow(QMainWindow):
                 module="MainWindow._open_snapshot_dialog_via_shortcut")
 
     def _collect_snapshot_context(self) -> dict:
-        """收集当前状态供快照保存。"""
         out = {
             "settings": self.settings,
             "panel_states": {},
         }
         try:
-            from core import symbols as sym_mod
-            out["symbols"] = sym_mod.get_raw()
+            from core.state import get_raw as _sym_raw
+            out["symbols"] = _sym_raw()
         except Exception:
             pass
         try:
-            from core import snippets as snip_mod
-            out["snippets"] = snip_mod.load()
+            out["snippets"] = ud.snippet_load()
         except Exception:
             pass
         try:
@@ -1880,7 +1878,6 @@ class MainWindow(QMainWindow):
     def apply_snapshot(self, data: dict):
         """由 SnapshotDialog 调用：把快照内容应用到当前状态。"""
         try:
-            # 1) settings 差异
             diff = data.get("settings_diff") or {}
             if diff:
                 try:
@@ -1888,22 +1885,20 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-            # 2) symbols
             symbols = data.get("symbols") or {}
             if symbols:
                 try:
-                    from core import symbols as sym_mod
                     import sympy as sp
+                    from core import state as state_mod
                     for name, raw in symbols.items():
                         try:
                             val = sp.sympify(raw)
-                            sym_mod.set_symbol(name, val, raw)
+                            state_mod.set_symbol(name, val, raw)
                         except Exception:
                             continue
                 except Exception:
                     pass
 
-            # 3) drafts
             drafts = data.get("drafts") or {}
             for k, v in drafts.items():
                 try:
@@ -1911,7 +1906,6 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-            # 4) panel_states
             states = data.get("panel_states") or {}
             for k, text in states.items():
                 panel = self._panels.get(k)
@@ -1992,7 +1986,7 @@ class MainWindow(QMainWindow):
                 pass
 
             try:
-                recent_mod.add(path, kind="session")
+                ud.recent_add(path, kind="session")
             except Exception:
                 pass
 
@@ -2005,12 +1999,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", str(e))
 
     def _export_session_via_shortcut(self):
-        """导出当前历史为 .mcsession。"""
         try:
             from PySide6.QtWidgets import QFileDialog
             path, _ = QFileDialog.getSaveFileName(
                 self,
-                self.i18n.t("export_session", "导出 .mcsession"),
+                self.i18n.t("export_session",
+                            "导出 .mcsession"),
                 "session.mcsession",
                 "MultiCalc Session (*.mcsession);;JSON (*.json)")
             if not path:
@@ -2018,7 +2012,8 @@ class MainWindow(QMainWindow):
             items = self.history.list(limit=500)
             if not items:
                 self.show_toast(
-                    self.i18n.t("nothing_to_export", "无可导出条目"),
+                    self.i18n.t("nothing_to_export",
+                                "无可导出条目"),
                     level="warn")
                 return
             import datetime as _dt
@@ -2039,9 +2034,10 @@ class MainWindow(QMainWindow):
                 ],
             }
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
+                json.dump(payload, f,
+                          ensure_ascii=False, indent=2)
             try:
-                recent_mod.add(path, kind="session")
+                ud.recent_add(path, kind="session")
             except Exception:
                 pass
             self.show_toast(path, level="success")
@@ -2055,7 +2051,6 @@ class MainWindow(QMainWindow):
     # ==================================================================
 
     def reload_shortcuts(self):
-        """快捷键自定义后调用，重新安装所有快捷键。"""
         try:
             from ui.shortcuts import (
                 reload_main_window_shortcuts,
@@ -2068,11 +2063,11 @@ class MainWindow(QMainWindow):
 
     def _reinstall_panel_shortcuts(self, panel):
         try:
-            for sc in getattr(
+            for s in getattr(
                     panel, "_panel_shortcuts", []) or []:
                 try:
-                    sc.setEnabled(False)
-                    sc.deleteLater()
+                    s.setEnabled(False)
+                    s.deleteLater()
                 except Exception:
                     pass
             panel._panel_shortcuts = []
@@ -2099,7 +2094,7 @@ class MainWindow(QMainWindow):
                 module="MainWindow._reinstall_panel_shortcuts")
 
     # ==================================================================
-    # 快捷键辅助：由 shortcuts.py 调用
+    # 快捷键辅助：由 ui.shortcuts 调用
     # ==================================================================
 
     def _open_settings_via_shortcut(self):
@@ -2109,15 +2104,12 @@ class MainWindow(QMainWindow):
         self._switch_by_key_pub("glyph")
 
     def _new_window_via_shortcut(self):
-        """新建窗口（同进程内）。"""
         try:
-            from PySide6.QtWidgets import QApplication
             win = MainWindow(
                 self.base_path, self.settings,
                 self.i18n, self.history)
             win.setAttribute(Qt.WA_DeleteOnClose, True)
             win.show()
-            # 保留引用，避免被 GC
             if not hasattr(QApplication.instance(),
                            "_extra_windows"):
                 QApplication.instance()._extra_windows = []
@@ -2131,8 +2123,8 @@ class MainWindow(QMainWindow):
 
     def open_handwriting(self):
         try:
-            from ui.widgets.focus_tracker import FocusTracker
-            from ui.widgets.handwriting import HandwritingDialog
+            from ui.widgets.input import FocusTracker
+            from ui.widgets.tools import HandwritingDialog
         except Exception as e:
             log_exc(e, module="MainWindow.open_handwriting")
             return
@@ -2154,8 +2146,8 @@ class MainWindow(QMainWindow):
 
     def open_ocr_input(self):
         try:
-            from ui.widgets.focus_tracker import FocusTracker
-            from ui.widgets.ocr_input import OCRInputDialog
+            from ui.widgets.input import FocusTracker
+            from ui.widgets.tools import OCRInputDialog
         except Exception as e:
             log_exc(e, module="MainWindow.open_ocr_input")
             return
@@ -2298,7 +2290,8 @@ class MainWindow(QMainWindow):
             btn.raise_()
             self._focus_exit_btn = btn
         except Exception as e:
-            log_exc(e, module="MainWindow._show_focus_exit_button")
+            log_exc(
+                e, module="MainWindow._show_focus_exit_button")
 
     def _hide_focus_exit_button(self):
         try:
@@ -2315,7 +2308,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         try:
             if (self._tray.is_enabled()
-                    and self.settings.get("minimize_to_tray", True)
+                    and self.settings.get(
+                        "minimize_to_tray", True)
                     and not self._force_quit):
                 event.ignore()
                 self.hide()
@@ -2357,3 +2351,9 @@ class MainWindow(QMainWindow):
 
 
 __all__ = ["MainWindow"]
+
+
+# 内部使用：避免循环导入
+def _fuzzy_score(*args, **kwargs):
+    from ui.dialogs import _fuzzy_score as _fs
+    return _fs(*args, **kwargs)

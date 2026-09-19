@@ -1,47 +1,100 @@
-"""自定义 widget 集合。"""
+"""自定义 widget 集合（合并后）。
+
+     ui.widgets.input      焦点 / 键按钮 / 输入历史 /
+                           建议气泡 / 差异徽章 / 空状态
+     ui.widgets.keyboard   键盘布局 DSL + 浮动计算器键盘
+     ui.widgets.tools      手写 / OCR / 绘图动画
+     ui.widgets.dialogs    快照 / 更新 / 插件 / 导览 /
+                           欢迎页 / 快捷键编辑器
+
+向后兼容别名：
+    COMPACT_LAYOUT = keyboard.LAYOUT_BASIC
+    SCI_LAYOUT     = keyboard.LAYOUT_SCIENTIFIC
+"""
 from __future__ import annotations
 
-from .focus_tracker import FocusTracker
-
-from .keyboard_layouts import (
-    Key, Layout,
-    get_layout, get_layout_name, all_module_keys,
-    LAYOUT_BASIC, LAYOUT_SCIENTIFIC, LAYOUT_DEFAULT,
-    LAYOUT_MATRIX, LAYOUT_PLOT, LAYOUT_PLOT3D, LAYOUT_FINANCE,
-    LAYOUT_DATE, LAYOUT_UNIT, LAYOUT_CURRENCY, LAYOUT_BASE,
-    LAYOUT_BITS, LAYOUT_CRYPTO, LAYOUT_LATEX, LAYOUT_SCRIPT,
+# ---- input ----
+from .input import (
+    FocusTracker,
+    KeyButton,
+    InputHistoryButton,
+    SuggestionBubble,
+    DiffBadge,
+    EmptyState,
 )
-from .key_button import KeyButton
 
-# ---------------------------------------------------------------------------
-# 向后兼容别名（老代码 import COMPACT_LAYOUT / SCI_LAYOUT 时不再报错）
-# ⚠ 关键点：别名在这里定义，不再从 keyboard_layouts 导入
-# ---------------------------------------------------------------------------
+# ---- keyboard ----
+from .keyboard import (
+    Key,
+    Layout,
+    get_layout,
+    get_layout_name,
+    all_module_keys,
+    LAYOUT_BASIC,
+    LAYOUT_SCIENTIFIC,
+    LAYOUT_DEFAULT,
+    LAYOUT_MATRIX,
+    LAYOUT_PLOT,
+    LAYOUT_PLOT3D,
+    LAYOUT_FINANCE,
+    LAYOUT_DATE,
+    LAYOUT_UNIT,
+    LAYOUT_CURRENCY,
+    LAYOUT_BASE,
+    LAYOUT_BITS,
+    LAYOUT_CRYPTO,
+    LAYOUT_LATEX,
+    LAYOUT_SCRIPT,
+    CalcKeyboard,
+)
+
+# 向后兼容别名
 COMPACT_LAYOUT = LAYOUT_BASIC
 SCI_LAYOUT = LAYOUT_SCIENTIFIC
 
-# 手写 / OCR（延迟加载，import 时不会真正实例化 Qt 对象）
+# ---- tools（延迟导入，避免顶层 import torch） ----
 try:
-    from .handwriting import HandwritingDialog, _Canvas as HandwritingCanvas
+    from .tools import HandwritingDialog, OCRInputDialog
 except Exception:
     HandwritingDialog = None
-    HandwritingCanvas = None
-
-try:
-    from .ocr_input import OCRInputDialog
-except Exception:
     OCRInputDialog = None
+
+# ---- dialogs（延迟导入） ----
+try:
+    from .dialogs import (
+        SnapshotDialog,
+        UpdateDialog,
+        PluginManagerDialog,
+        QuickTour,
+        WelcomeWidget,
+        ShortcutEditor,
+    )
+except Exception:
+    SnapshotDialog = None
+    UpdateDialog = None
+    PluginManagerDialog = None
+    QuickTour = None
+    WelcomeWidget = None
+    ShortcutEditor = None
 
 
 __all__ = [
-    "FocusTracker",
+    # input
+    "FocusTracker", "KeyButton", "InputHistoryButton",
+    "SuggestionBubble", "DiffBadge", "EmptyState",
+    # keyboard
     "Key", "Layout",
     "get_layout", "get_layout_name", "all_module_keys",
-    "KeyButton",
     "LAYOUT_BASIC", "LAYOUT_SCIENTIFIC", "LAYOUT_DEFAULT",
-    "LAYOUT_MATRIX", "LAYOUT_PLOT", "LAYOUT_PLOT3D", "LAYOUT_FINANCE",
-    "LAYOUT_DATE", "LAYOUT_UNIT", "LAYOUT_CURRENCY", "LAYOUT_BASE",
-    "LAYOUT_BITS", "LAYOUT_CRYPTO", "LAYOUT_LATEX", "LAYOUT_SCRIPT",
+    "LAYOUT_MATRIX", "LAYOUT_PLOT", "LAYOUT_PLOT3D",
+    "LAYOUT_FINANCE", "LAYOUT_DATE", "LAYOUT_UNIT",
+    "LAYOUT_CURRENCY", "LAYOUT_BASE", "LAYOUT_BITS",
+    "LAYOUT_CRYPTO", "LAYOUT_LATEX", "LAYOUT_SCRIPT",
     "COMPACT_LAYOUT", "SCI_LAYOUT",
-    "HandwritingDialog", "HandwritingCanvas", "OCRInputDialog",
+    "CalcKeyboard",
+    # tools
+    "HandwritingDialog", "OCRInputDialog",
+    # dialogs
+    "SnapshotDialog", "UpdateDialog", "PluginManagerDialog",
+    "QuickTour", "WelcomeWidget", "ShortcutEditor",
 ]

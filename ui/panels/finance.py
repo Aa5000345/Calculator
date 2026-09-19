@@ -1,10 +1,29 @@
-"""财务面板：贷款 / 复利 / NPV-IRR / 等额本金 / TVM / 折旧 /
-债券 / 期权 / 个税 / XIRR。
+"""财务 / 日期面板。
 
-变更历史：
-- 第 1 轮：
-  - bond_ytm 不再用面值当市场价，新增 Market Price 输入框
-  - 去掉文件头尾重复的 friendly_error import
+合并自：ui/panels/finance.py + ui/panels/date.py
+
+对外接口（类名保持不变，老 registry.py 无需改动）：
+    FinancePanel
+    DatePanel
+
+依赖（合并后）：
+    core.base     —— InputError / log_exc
+    core.engine   —— finance_loan / finance_compound / format_result
+    core.finance  —— 所有 NPV/IRR/XIRR/贷款/TVM/折旧/债券/期权/个税
+    core.dates    —— 所有日期 / 农历 / 日出日落
+    ui.panels.base       —— CalcPanel
+    ui.panels._common    —— ResultView / InlinePreviewBar /
+                            friendly_error
+
+修复记录（本轮）：
+- FinancePanel：`from core import finance as fin`
+  → 统一别名 `fin_mod`，与 `core.finance` 模块名区分；
+  同时移除 `from core import tax / bonds / options` 三处独立导入
+  （已合并到 `core.finance`）。
+- DatePanel：`from core import dates as dtmod`
+  → `from core import dates as dt_mod`；`from core import lunar`
+  / `from core import astro` 改为 `dt_mod.solar_to_lunar` /
+  `dt_mod.sun_times`。
 """
 from __future__ import annotations
 
@@ -12,18 +31,36 @@ import json
 import re
 
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
-    QHBoxLayout, QFormLayout, QComboBox, QTabWidget, QWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView,
+    QCheckBox, QComboBox, QFormLayout, QGridLayout,
+    QHeaderView, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+    QPushButton, QTableWidget, QTableWidgetItem, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
 from core import engine
-from core import finance as fin
-from ._common import friendly_error, InlinePreviewBar
+from core import finance as fin_mod
+from core import dates as dt_mod
+from ._common import (
+    friendly_error,
+    InlinePreviewBar,
+)
 from .base import CalcPanel
 
 
+__all__ = ["FinancePanel", "DatePanel"]
+
+
+# ===========================================================================
+# 财务
+# ===========================================================================
+
 class FinancePanel(CalcPanel):
+    """财务面板。
+
+    贷款 / 复利 / NPV-IRR / 等额本金 / TVM / 折旧 / 债券 / 期权 /
+    个税 / XIRR。
+    """
+
     module_key = "finance"
 
     def __init__(self, settings, i18n, history):
@@ -132,7 +169,7 @@ class FinancePanel(CalcPanel):
 
     def loan(self):
         try:
-            info = fin.loan_schedule(
+            info = fin_mod.loan_schedule(
                 float(self.p.text()),
                 float(self.rate.text()),
                 float(self.years.text()),
@@ -232,8 +269,8 @@ class FinancePanel(CalcPanel):
 
     def do_npv(self):
         try:
-            r = fin.npv(float(self.disc.text()),
-                        self._parse_cf())
+            r = fin_mod.npv(float(self.disc.text()),
+                            self._parse_cf())
             s = json.dumps({"NPV": r}, ensure_ascii=False,
                            indent=2)
             self.result.setPlainText(s)
@@ -245,7 +282,7 @@ class FinancePanel(CalcPanel):
 
     def do_irr(self):
         try:
-            roots = fin.irr_all(self._parse_cf())
+            roots = fin_mod.irr_all(self._parse_cf())
             if not roots:
                 self.result.setPlainText(
                     self.i18n.t("no_solution", "No solution"))
@@ -287,7 +324,7 @@ class FinancePanel(CalcPanel):
 
     def compare(self):
         try:
-            r = fin.compare_plans(
+            r = fin_mod.compare_plans(
                 float(self.cmp_p.text()),
                 float(self.cmp_rate.text()),
                 float(self.cmp_years.text()))
@@ -331,8 +368,9 @@ class FinancePanel(CalcPanel):
             s = x.text().strip()
             return float(s) if s else None
         try:
-            r = fin.tvm(
-                pv=_maybe(self.tvm_pv), fv=_maybe(self.tvm_fv),
+            r = fin_mod.tvm(
+                pv=_maybe(self.tvm_pv),
+                fv=_maybe(self.tvm_fv),
                 rate=_maybe(self.tvm_rate),
                 nper=_maybe(self.tvm_nper),
                 pmt=_maybe(self.tvm_pmt),
@@ -377,7 +415,7 @@ class FinancePanel(CalcPanel):
     def depr_calc(self):
         try:
             year = self.d_year.text().strip() or None
-            r = fin.depreciation(
+            r = fin_mod.depreciation(
                 float(self.d_cost.text()),
                 float(self.d_salvage.text()),
                 int(self.d_life.text()),
@@ -409,7 +447,7 @@ class FinancePanel(CalcPanel):
                 friendly_error(self.i18n, e, "finance"))
 
     # ==================================================================
-    # 债券（第 1 轮修复）
+    # 债券
     # ==================================================================
 
     def _build_bond_tab(self):
@@ -417,7 +455,6 @@ class FinancePanel(CalcPanel):
         self.b_coupon = QLineEdit("5")
         self.b_years = QLineEdit("10")
         self.b_ytm = QLineEdit("4")
-        # 第 1 轮新增：市场价输入框
         self.b_price = QLineEdit("1080")
         self.b_freq = QLineEdit("2")
         b1 = QPushButton(self.i18n.t("calc", "计算价格"))
@@ -442,8 +479,7 @@ class FinancePanel(CalcPanel):
 
     def bond_price(self):
         try:
-            from core import bonds
-            r = bonds.bond_price(
+            r = fin_mod.bond_price(
                 self.b_face.text(), self.b_coupon.text(),
                 self.b_years.text(), self.b_ytm.text(),
                 int(self.b_freq.text() or "1"))
@@ -456,18 +492,14 @@ class FinancePanel(CalcPanel):
                 friendly_error(self.i18n, e, "finance"))
 
     def bond_ytm(self):
-        """由市场价格反求 YTM。
-
-        修复：不再用面值当价格；改用 b_price 输入框。
-        """
+        """由市场价格反求 YTM。"""
         try:
-            from core import bonds
             price_text = self.b_price.text().strip()
             if not price_text:
                 self.result.setPlainText(
                     "请填写 Market Price 输入框")
                 return
-            r = bonds.bond_ytm(
+            r = fin_mod.bond_ytm(
                 self.b_face.text(), self.b_coupon.text(),
                 self.b_years.text(), price_text,
                 int(self.b_freq.text() or "1"))
@@ -508,8 +540,7 @@ class FinancePanel(CalcPanel):
 
     def option_calc(self):
         try:
-            from core import options
-            r = options.black_scholes(
+            r = fin_mod.black_scholes(
                 self.o_s.text(), self.o_k.text(),
                 self.o_t.text(), self.o_r.text(),
                 self.o_sigma.text(),
@@ -550,15 +581,14 @@ class FinancePanel(CalcPanel):
 
     def tax_calc(self):
         try:
-            from core import tax
             c = self.t_country.currentData()
             if c == "CN":
-                r = tax.cn_income_tax(
+                r = fin_mod.cn_income_tax(
                     self.t_salary.text(), self.t_si.text(),
                     self.t_sd.text(),
                     int(self.t_months.text() or "1"))
             else:
-                r = tax.us_federal_tax(
+                r = fin_mod.us_federal_tax(
                     self.t_salary.text(),
                     filing=("married"
                             if "married" in c else "single"))
@@ -574,7 +604,8 @@ class FinancePanel(CalcPanel):
     # ==================================================================
 
     def _build_xirr_tab(self):
-        self.x_cfs = QLineEdit("-1000, 200, 300, 500, 400")
+        self.x_cfs = QLineEdit(
+            "-1000, 200, 300, 500, 400")
         self.x_dates = QLineEdit(
             "2024-01-01, 2024-06-01, 2024-12-01, "
             "2025-06-01, 2025-12-01")
@@ -594,7 +625,7 @@ class FinancePanel(CalcPanel):
                    for x in self.x_cfs.text().split(",")]
             dates = [d.strip()
                      for d in self.x_dates.text().split(",")]
-            r = fin.xirr(cfs, dates)
+            r = fin_mod.xirr(cfs, dates)
             self.result.setPlainText(f"XIRR = {r:.4f}%")
             self.add_history("xirr", f"{r:.4f}%",
                              module="finance-xirr")
@@ -603,4 +634,325 @@ class FinancePanel(CalcPanel):
                 friendly_error(self.i18n, e, "finance"))
 
 
-__all__ = ["FinancePanel"]
+# ===========================================================================
+# 日期
+# ===========================================================================
+
+class DatePanel(CalcPanel):
+    """日期面板：日期差 / 加天数 / 倒计时 / 周信息 / 时区 /
+    时间戳 / 年龄 / 农历 / 日出日落。"""
+
+    module_key = "date"
+
+    def __init__(self, settings, i18n, history):
+        super().__init__(settings, i18n, history)
+
+        # ---------------- 主表单 ----------------
+        self.d1 = QLineEdit("2024-01-01")
+        self.d2 = QLineEdit("2024-12-31")
+        self.days = QLineEdit("30")
+        self.country = QLineEdit("CN")
+        self.exclude_holidays = QCheckBox(
+            i18n.t("exclude_holidays", "Exclude holidays"))
+        self.exclude_holidays.setChecked(True)
+
+        self.result = QPlainTextEdit()
+        self.result.setReadOnly(True)
+
+        # ---------------- 时区 / 时间戳 ----------------
+        self.tz_from = QLineEdit("Asia/Shanghai")
+        self.tz_to = QLineEdit("UTC")
+        self.dt_str = QLineEdit("2024-01-01 12:00:00")
+        self.ts = QLineEdit("1700000000")
+        self.birth = QLineEdit("1990-01-01")
+        self.as_of = QLineEdit("")
+
+        # ---------------- 按钮 ----------------
+        b_diff = QPushButton(i18n.t("diff"))
+        b_diff.clicked.connect(self.diff)
+        b_add = QPushButton(i18n.t("date_add"))
+        b_add.clicked.connect(self.add)
+        b_count = QPushButton(
+            i18n.t("countdown", "Countdown"))
+        b_count.clicked.connect(self.countdown)
+        b_week = QPushButton(
+            i18n.t("week_info", "Week info"))
+        b_week.clicked.connect(self.week_info)
+        b_tz = QPushButton(
+            i18n.t("tz_convert", "TZ convert"))
+        b_tz.clicked.connect(self.tz_convert)
+        b_ts2d = QPushButton(
+            i18n.t("ts_to_date", "TS→Date"))
+        b_ts2d.clicked.connect(self.ts_to_date)
+        b_d2ts = QPushButton(
+            i18n.t("date_to_ts", "Date→TS"))
+        b_d2ts.clicked.connect(self.date_to_ts)
+        b_age = QPushButton(i18n.t("age", "Age"))
+        b_age.clicked.connect(self.age)
+        b_hol = QPushButton(
+            i18n.t("holidays", "Holidays"))
+        b_hol.clicked.connect(self.holidays)
+
+        # ---------------- 主表单布局 ----------------
+        form = QGridLayout()
+        form.addWidget(QLabel(i18n.t("date1")), 0, 0)
+        form.addWidget(self.d1, 0, 1)
+        form.addWidget(QLabel(i18n.t("date2")), 1, 0)
+        form.addWidget(self.d2, 1, 1)
+        form.addWidget(QLabel(i18n.t("days")), 2, 0)
+        form.addWidget(self.days, 2, 1)
+        form.addWidget(QLabel("Country"), 3, 0)
+        form.addWidget(self.country, 3, 1)
+        form.addWidget(self.exclude_holidays, 4, 1)
+        form.addWidget(QLabel("From TZ"), 5, 0)
+        form.addWidget(self.tz_from, 5, 1)
+        form.addWidget(QLabel("To TZ"), 6, 0)
+        form.addWidget(self.tz_to, 6, 1)
+        form.addWidget(QLabel("Datetime"), 7, 0)
+        form.addWidget(self.dt_str, 7, 1)
+        form.addWidget(
+            QLabel(i18n.t("timestamp", "Timestamp")), 8, 0)
+        form.addWidget(self.ts, 8, 1)
+        form.addWidget(
+            QLabel(i18n.t("birthday", "Birthday")), 9, 0)
+        form.addWidget(self.birth, 9, 1)
+        form.addWidget(
+            QLabel(i18n.t("as_of", "As of")), 10, 0)
+        form.addWidget(self.as_of, 10, 1)
+
+        row1 = QHBoxLayout()
+        for b in (b_diff, b_add, b_count):
+            row1.addWidget(b)
+        row2 = QHBoxLayout()
+        for b in (b_week, b_tz, b_age):
+            row2.addWidget(b)
+        row3 = QHBoxLayout()
+        for b in (b_ts2d, b_d2ts, b_hol):
+            row3.addWidget(b)
+
+        # ---------------- Tab ----------------
+        self._extra_tabs = QTabWidget()
+        w_main = QWidget()
+        vm = QVBoxLayout(w_main)
+        vm.addLayout(form)
+        vm.addLayout(row1)
+        vm.addLayout(row2)
+        vm.addLayout(row3)
+        vm.addWidget(self.result, 1)
+        self._extra_tabs.addTab(
+            w_main, i18n.t("date_calc", "日期"))
+        self._extra_tabs.addTab(
+            self._build_lunar_tab(),
+            i18n.t("lunar", "农历"))
+        self._extra_tabs.addTab(
+            self._build_sun_tab(),
+            i18n.t("sun", "日出日落"))
+
+        main = QVBoxLayout(self)
+        main.addWidget(self._extra_tabs, 1)
+
+    # ==================================================================
+    # 日期差
+    # ==================================================================
+
+    def diff(self):
+        try:
+            info = dt_mod.date_diff_info(
+                self.d1.text(), self.d2.text(),
+                self.country.text() or "CN",
+                self.exclude_holidays.isChecked())
+            msg = [
+                f"{self.i18n.t('days')}: {info['abs_days']}",
+                f"diff(raw): {info['days']}",
+                f"weeks: {info['weeks']}w "
+                f"{info['remaining_days']}d",
+                f"{self.i18n.t('workdays', 'Workdays')}: "
+                f"{info['workdays']}",
+                f"{self.i18n.t('holidays_in_range', 'Holidays')}"
+                f": {info['holidays_in_range']}",
+            ]
+            if info["cross_year"]:
+                msg.append(
+                    f"[{self.i18n.t('cross_year_hint', 'Cross-year')}]")
+            if info["leap_in_range"]:
+                msg.append(
+                    f"[{self.i18n.t('leap_year_hint', 'Leap year')}]")
+            s = "\n".join(msg)
+            self.result.setPlainText(s)
+            self.add_history(
+                f"{self.d1.text()} → {self.d2.text()}", s,
+                module="date-diff")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def add(self):
+        try:
+            r = dt_mod.add_days(
+                self.d1.text(), self.days.text())
+            self.result.setPlainText(r)
+            self.add_history(
+                f"{self.d1.text()} + {self.days.text()}", r,
+                module="date-add")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def countdown(self):
+        try:
+            r = dt_mod.countdown(
+                self.d2.text(), self.d1.text())
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history(
+                self.d2.text(), s,
+                module="date-countdown")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def week_info(self):
+        try:
+            info = dt_mod.date_info(self.d1.text())
+            wr = dt_mod.week_range(self.d1.text())
+            info["week_start"] = wr["start"]
+            info["week_end"] = wr["end"]
+            s = json.dumps(info, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history(
+                self.d1.text(), s, module="date-week")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def tz_convert(self):
+        try:
+            r = dt_mod.timezone_convert(
+                self.dt_str.text(),
+                self.tz_from.text() or "UTC",
+                self.tz_to.text() or "UTC")
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history(
+                f"{self.dt_str.text()} "
+                f"{self.tz_from.text()}→{self.tz_to.text()}",
+                s, module="date-tz")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def ts_to_date(self):
+        try:
+            r = dt_mod.from_timestamp(
+                self.ts.text(),
+                self.tz_from.text() or "UTC")
+            self.result.setPlainText(r)
+            self.add_history(
+                self.ts.text(), r,
+                module="date-ts2date")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def date_to_ts(self):
+        try:
+            r = dt_mod.to_timestamp(
+                self.d1.text(),
+                self.tz_from.text() or "UTC")
+            self.result.setPlainText(str(r))
+            self.add_history(
+                self.d1.text(), r,
+                module="date-date2ts")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def age(self):
+        try:
+            r = dt_mod.age_precise(
+                self.birth.text(),
+                self.as_of.text() or None)
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history(
+                self.birth.text(), s, module="date-age")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    def holidays(self):
+        try:
+            year = dt_mod.parse_date(
+                self.d1.text()).year
+            r = dt_mod.country_holidays(
+                self.country.text() or "CN", year)
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history(
+                f"{self.country.text()}:{year}", s,
+                module="date-holidays")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    # ==================================================================
+    # 农历 Tab
+    # ==================================================================
+
+    def _build_lunar_tab(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        self.lunar_date = QLineEdit("2024-01-01")
+        b = QPushButton(self.i18n.t("calc", "转换"))
+        b.clicked.connect(self.lunar_convert)
+        v.addWidget(QLabel("公历 (YYYY-MM-DD)"))
+        v.addWidget(self.lunar_date)
+        v.addWidget(b)
+        v.addStretch(1)
+        return w
+
+    def lunar_convert(self):
+        try:
+            r = dt_mod.solar_to_lunar(
+                self.lunar_date.text())
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history("lunar", s,
+                             module="date-lunar")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))
+
+    # ==================================================================
+    # 日出日落 Tab
+    # ==================================================================
+
+    def _build_sun_tab(self):
+        w = QWidget()
+        f = QFormLayout(w)
+        self.sun_date = QLineEdit("2024-06-21")
+        self.sun_lat = QLineEdit("39.9")
+        self.sun_lon = QLineEdit("116.4")
+        self.sun_tz = QLineEdit("Asia/Shanghai")
+        b = QPushButton(self.i18n.t("calc", "计算"))
+        b.clicked.connect(self.sun_calc)
+        f.addRow(QLabel("Date"), self.sun_date)
+        f.addRow(QLabel("Latitude"), self.sun_lat)
+        f.addRow(QLabel("Longitude"), self.sun_lon)
+        f.addRow(QLabel("Timezone"), self.sun_tz)
+        f.addRow(b)
+        return w
+
+    def sun_calc(self):
+        try:
+            r = dt_mod.sun_times(
+                self.sun_date.text(),
+                self.sun_lat.text(),
+                self.sun_lon.text(),
+                self.sun_tz.text() or "UTC")
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+            self.result.setPlainText(s)
+            self.add_history("sun", s, module="date-sun")
+        except Exception as e:
+            self.result.setPlainText(
+                friendly_error(self.i18n, e, "date"))

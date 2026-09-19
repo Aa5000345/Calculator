@@ -2,8 +2,8 @@
 
 覆盖 P0 修复点：
 - widgets/__init__.py 导入不再失败
-- base_convert / ai / crypto_tools 面板可构造
-- 所有 25 个面板在新代码下不会抛异常
+- basic / ai / tools 面板可构造
+- 所有面板在新代码下不会抛异常
 
 运行：pytest tests/test_smoke.py -v
 """
@@ -79,8 +79,9 @@ class _FakeSettings:
         pass
 
     def palette(self, override=None):
-        return {"bg": "#1e1e1e", "fg": "#ffffff", "panel": "#2d2d30",
-                "accent": "#007acc", "border": "#3f3f46", "hover": "#3a3d41"}
+        return {"bg": "#1e1e1e", "fg": "#ffffff",
+                "panel": "#2d2d30", "accent": "#007acc",
+                "border": "#3f3f46", "hover": "#3a3d41"}
 
     def themes(self):
         return {}
@@ -187,7 +188,7 @@ def test_widgets_import():
 
 def test_keyboard_layouts_alias():
     """P0-2：向后兼容别名应为正确的 Layout 对象。"""
-    from ui.widgets.keyboard_layouts import (
+    from ui.widgets.keyboard import (
         LAYOUT_BASIC, LAYOUT_SCIENTIFIC,
     )
     from ui.widgets import COMPACT_LAYOUT, SCI_LAYOUT
@@ -197,7 +198,7 @@ def test_keyboard_layouts_alias():
 
 def test_base_convert_live_integer(qapp):
     """P0-3：进制联动 — 整数路径。"""
-    from ui.panels.base_convert import BasePanel
+    from ui.panels.basic import BasePanel
     p = BasePanel(_FakeSettings(), _FakeI18n(), _FakeHistory())
     p.in_dec.setText("255")
     assert p.in_hex.text().upper() == "FF"
@@ -207,7 +208,7 @@ def test_base_convert_live_integer(qapp):
 
 def test_base_convert_live_fraction(qapp):
     """P0-3：进制联动 — 小数路径（修复前不联动）。"""
-    from ui.panels.base_convert import BasePanel
+    from ui.panels.basic import BasePanel
     p = BasePanel(_FakeSettings(), _FakeI18n(), _FakeHistory())
     p.in_dec.setText("10.5")
     # 10.5 = 1010.1 (bin) = A.8 (hex) = 12.4 (oct)
@@ -218,7 +219,7 @@ def test_base_convert_live_fraction(qapp):
 
 def test_base_convert_hex_to_others(qapp):
     """P0-3：从十六进制为源时其他三个联动。"""
-    from ui.panels.base_convert import BasePanel
+    from ui.panels.basic import BasePanel
     p = BasePanel(_FakeSettings(), _FakeI18n(), _FakeHistory())
     p.in_hex.setText("FF")
     assert p.in_dec.text() == "255"
@@ -236,7 +237,7 @@ def test_ai_panel_constructs(qapp):
 
 def test_crypto_panel_constructs(qapp):
     """P0-5：加密面板（RSA Worker 化后）可构造。"""
-    from ui.panels.crypto_tools import CryptoPanel
+    from ui.panels.tools import CryptoPanel
     p = CryptoPanel(_FakeSettings(), _FakeI18n(), _FakeHistory())
     assert p.rsa_gen_btn is not None
 

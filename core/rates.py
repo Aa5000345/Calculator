@@ -1,10 +1,15 @@
-"""汇率管理：可插拔汇率源 + 6h 缓存 + 离线回退 + 手动币对保存。
+"""汇率 + 加密货币。
 
-修复：
-- ensure_fresh() 不再把离线兜底当成在线成功刷新 updated；
-- load_plugin_dir() 改用 importlib.util.spec_from_file_location，无需
-  包目录有 __init__.py，也不必把 plugins/rates 加进 sys.path；
-- fetch_rates() 返回 (rates, source_name, is_online)。
+合并自：core/rates.py + core/crypto.py
+
+对外接口：
+    # 汇率源
+    RateSource, register_source, list_sources, get_source
+    init(base_path, plugin_dir=None)
+    load_offline, save_offline, fetch_rates, ensure_fresh
+    convert, batch_convert
+    # 加密货币
+    COINS, list_coins, fetch_prices, get_cached
 """
 from __future__ import annotations
 
@@ -15,13 +20,23 @@ import pkgutil
 import sys
 import time
 
-from core.errors import NetworkError
-from core.logger import log_warn, log_info
+from core.base import NetworkError, log_info, log_warn
+
+
+__all__ = [
+    "RateSource", "register_source", "list_sources", "get_source",
+    "init", "load_offline", "save_offline",
+    "fetch_rates", "ensure_fresh", "convert", "batch_convert",
+    "COINS", "list_coins", "fetch_prices", "get_cached",
+]
+
+
+# ===========================================================================
+# 汇率源
+# ===========================================================================
 
 _CACHE_TTL = 6 * 3600
 
-
-# ---------------- 插件基类与注册表 ----------------
 
 class RateSource:
     """汇率源插件基类。name 唯一；fetch() 返回 {code: rate_per_USD}。"""
@@ -43,15 +58,13 @@ def register_source(src: RateSource):
     log_info(f"register rate source: {src.name}", module="rates")
 
 
-def list_sources():
+def list_sources() -> list:
     return sorted(_REGISTRY.values(), key=lambda s: s.priority)
 
 
 def get_source(name):
     return _REGISTRY.get(name)
 
-
-# ---------------- 内置源 ----------------
 
 class OpenErApiSource(RateSource):
     name = "open.er-api.com"
@@ -61,7 +74,8 @@ class OpenErApiSource(RateSource):
 
     def fetch(self):
         import requests
-        r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10)
+        r = requests.get(
+            "https://open.er-api.com/v6/latest/USD", timeout=10)
         d = r.json()
         if d.get("result") == "success":
             return d.get("rates") or {}
@@ -76,7 +90,8 @@ class ExchangeRateHostSource(RateSource):
 
     def fetch(self):
         import requests
-        r = requests.get("https://api.exchangerate.host/latest", timeout=10)
+        r = requests.get(
+            "https://api.exchangerate.host/latest", timeout=10)
         d = r.json()
         rates = d.get("rates")
         if rates:
@@ -99,19 +114,10 @@ class FallbackOfflineSource(RateSource):
         return load_offline(self.base_path).get("rates", {})
 
 
-# ---------------- 动态加载外部插件 ----------------
-
 def load_plugin_dir(dir_path):
-    """加载 `plugins/rates/*.py`。
-
-    每个文件可定义 RateSource 子类并实现 `register()` 回调；
-    不要求目录是包（无需 __init__.py），也不需要把它加入 sys.path。
-    """
+    """加载 `plugins/rates/*.py`（无需 __init__.py）。"""
     if not os.path.isdir(dir_path):
         return
-    parent = os.path.dirname(dir_path)
-    if parent and parent not in sys.path:
-        sys.path.insert(0, parent)
     for mod_info in pkgutil.iter_modules([dir_path]):
         mod_path = os.path.join(dir_path, mod_info.name + ".py")
         try:
@@ -120,18 +126,16 @@ def load_plugin_dir(dir_path):
             if spec is None or spec.loader is None:
                 continue
             mod = importlib.util.module_from_spec(spec)
-            # 让插件内可以用相对名互相 import
             sys.modules[spec.name] = mod
             spec.loader.exec_module(mod)
             if hasattr(mod, "register"):
                 mod.register()
-                log_info(f"plugin loaded: {mod_info.name}", module="rates")
+                log_info(f"plugin loaded: {mod_info.name}",
+                         module="rates")
         except Exception as e:  # noqa: BLE001
             log_warn(f"plugin load failed: {mod_info.name}: {e}",
                      module="rates")
 
-
-# ---------------- 初始化 ----------------
 
 def init(base_path, plugin_dir=None):
     _REGISTRY.clear()
@@ -142,7 +146,9 @@ def init(base_path, plugin_dir=None):
         load_plugin_dir(plugin_dir)
 
 
-# ---------------- 离线文件 ----------------
+# ===========================================================================
+# 离线文件
+# ===========================================================================
 
 def _offline_path(base_path):
     return os.path.join(base_path, "config", "rates_offline.json")
@@ -174,7 +180,9 @@ def save_offline(base_path, data):
         pass
 
 
-# ---------------- 获取 ----------------
+# ===========================================================================
+# 获取
+# ===========================================================================
 
 def fetch_rates(preferred=None):
     """按优先级（或 preferred）尝试所有源。
@@ -185,25 +193,29 @@ def fetch_rates(preferred=None):
     if preferred:
         src = get_source(preferred)
         if src:
-            order = [src] + [s for s in order if s.name != preferred]
+            order = [src] + [s for s in order
+                             if s.name != preferred]
     last = None
     for src in order:
         try:
             rates = src.fetch()
             if rates:
-                log_info(f"rate source ok: {src.name}", module="rates")
-                return rates, src.name, bool(getattr(src, "is_online", True))
+                log_info(f"rate source ok: {src.name}",
+                         module="rates")
+                return (rates, src.name,
+                        bool(getattr(src, "is_online", True)))
         except Exception as e:  # noqa: BLE001
             last = e
-            log_warn(f"rate source fail {src.name}: {e}", module="rates")
+            log_warn(f"rate source fail {src.name}: {e}",
+                     module="rates")
     raise NetworkError(f"所有汇率源均失败：{last}")
 
 
 def ensure_fresh(base_path, force=False, source=None):
     """返回最新缓存；仅在线成功才刷新 updated。
 
-    离线兜底时不会把 ``updated`` 覆盖为当前时间——否则接下来 6 小时
-    都不会再尝试联网。
+    离线兜底时不会把 ``updated`` 覆盖为当前时间——否则接下来
+    6 小时都不会再尝试联网。
     """
     data = load_offline(base_path)
     now = time.time()
@@ -218,7 +230,7 @@ def ensure_fresh(base_path, force=False, source=None):
             }
             save_offline(base_path, new_data)
             return new_data
-        # 离线兜底：保留原 updated；只有现有数据完全为空时填充默认值
+        # 离线兜底：保留原 updated
         if not data.get("rates"):
             data = {"base": "USD", "updated": 0,
                     "source": src_name, "rates": rates}
@@ -233,11 +245,79 @@ def convert(amount, from_cur, to_cur, rates):
     if fc == tc:
         return amount
     if fc not in rates:
-        raise NetworkError(f"未知币种：{fc}", friendly_key="err_currency")
+        raise NetworkError(f"未知币种：{fc}",
+                           friendly_key="err_currency")
     if tc not in rates:
-        raise NetworkError(f"未知币种：{tc}", friendly_key="err_currency")
+        raise NetworkError(f"未知币种：{tc}",
+                           friendly_key="err_currency")
     return amount / rates[fc] * rates[tc]
 
 
 def batch_convert(amount, from_cur, targets, rates):
-    return {t: convert(amount, from_cur, t, rates) for t in targets}
+    return {t: convert(amount, from_cur, t, rates)
+            for t in targets}
+
+
+# ===========================================================================
+# 加密货币
+# ===========================================================================
+
+COINS = {
+    "BTC":   ("bitcoin",       "₿"),
+    "ETH":   ("ethereum",      "Ξ"),
+    "USDT":  ("tether",        "₮"),
+    "BNB":   ("binancecoin",   "BNB"),
+    "SOL":   ("solana",        "SOL"),
+    "XRP":   ("ripple",        "XRP"),
+    "ADA":   ("cardano",       "ADA"),
+    "DOGE":  ("dogecoin",      "Ð"),
+    "DOT":   ("polkadot",      "DOT"),
+    "MATIC": ("matic-network", "MATIC"),
+    "LTC":   ("litecoin",      "Ł"),
+    "LINK":  ("chainlink",     "LINK"),
+    "AVAX":  ("avalanche-2",   "AVAX"),
+    "TRX":   ("tron",          "TRX"),
+    "SHIB":  ("shiba-inu",     "SHIB"),
+}
+
+_COIN_CACHE: dict = {"ts": 0, "data": {}}
+_COIN_TTL = 300
+
+
+def list_coins() -> list:
+    return sorted(COINS.keys())
+
+
+def fetch_prices(vs="usd") -> dict:
+    """返回 {SYMBOL: price}，失败抛 NetworkError。"""
+    now = time.time()
+    if (now - _COIN_CACHE["ts"] < _COIN_TTL
+            and _COIN_CACHE["data"]):
+        return _COIN_CACHE["data"]
+
+    ids = ",".join(v[0] for v in COINS.values())
+    url = "https://api.coingecko.com/api/v3/simple/price"
+    params = {"ids": ids, "vs_currencies": vs}
+    try:
+        import requests
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+        if not isinstance(data, dict):
+            raise NetworkError("CoinGecko 返回异常")
+        out = {}
+        for sym, (cid, _icon) in COINS.items():
+            if cid in data and vs in data[cid]:
+                out[sym] = float(data[cid][vs])
+        _COIN_CACHE["ts"] = now
+        _COIN_CACHE["data"] = out
+        log_info(f"crypto prices updated: {len(out)}",
+                 module="crypto")
+        return out
+    except Exception as e:  # noqa: BLE001
+        log_warn(f"crypto fetch failed: {e}", module="crypto")
+        raise NetworkError(
+            f"加密货币汇率获取失败：{e}") from e
+
+
+def get_cached() -> dict:
+    return dict(_COIN_CACHE["data"])

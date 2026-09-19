@@ -9,8 +9,7 @@
 """
 from __future__ import annotations
 
-from core.plugin_api import (
-    PanelPlugin,
+from core.plugins import (    PanelPlugin,
     plugin_metadata,
     register_command,
     register_menu,

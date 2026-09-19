@@ -4,6 +4,14 @@
 - CLI 解析放在最前面，走 CLI 路径时完全不加载 Qt / matplotlib
 - URL 参数（?expr=1+1）通过环境变量传给 MainWindow
 - Splash Screen 在导入 Qt / matplotlib 之后、MainWindow 构造之前显示
+
+导入路径（合并后）：
+    core.cli      —— try_run_cli / extract_expr_from_argv /
+                     APP_VERSION
+    core.runtime  —— install_error_handler
+    core.state    —— Settings / I18n / History
+    core.rates    —— init
+    ui.main_window —— MainWindow
 """
 import os
 
@@ -12,7 +20,6 @@ os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
 import sys
 
-# CLI 模块只依赖标准库；提前导入不拖慢 GUI 启动
 from core import cli as _cli
 from core.cli import APP_VERSION as _APP_VERSION
 
@@ -36,16 +43,14 @@ def main():
     from PySide6.QtGui import QPixmap
     from PySide6.QtWidgets import QApplication, QSplashScreen
 
-    from core import error_handler
-    from core.settings import Settings
-    from core.i18n import I18n
-    from core.history import History
+    from core.runtime import install_error_handler
+    from core.state import I18n, History, Settings
     from ui.main_window import MainWindow
 
     # 3) 安装异常钩子（尽早，覆盖初始化阶段）
-    error_handler.install()
+    install_error_handler()
 
-    # 4) 高 DPI（Qt6 已默认开启；这里只调整取整策略获得更平滑缩放）
+    # 4) 高 DPI（Qt6 已默认开启；调整取整策略获得更平滑缩放）
     try:
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -65,7 +70,8 @@ def main():
     # 6) 初始化
     try:
         settings = Settings(
-            os.path.join(base_path, "config", "default_settings.json"))
+            os.path.join(base_path, "config",
+                         "default_settings.json"))
     except Exception as e:
         print(f"设置加载失败: {e}", file=sys.stderr)
         if splash is not None:
@@ -79,7 +85,8 @@ def main():
     try:
         rates_mod.init(
             base_path,
-            plugin_dir=os.path.join(base_path, "plugins", "rates"))
+            plugin_dir=os.path.join(
+                base_path, "plugins", "rates"))
     except Exception:
         pass
 
@@ -120,7 +127,8 @@ def _show_splash(base_path, QPixmap, QSplashScreen, Qt):
     try:
         icon_path = os.path.join(base_path, "assets", "icon.ico")
         if not os.path.exists(icon_path):
-            icon_path = os.path.join(base_path, "assets", "icon.png")
+            icon_path = os.path.join(
+                base_path, "assets", "icon.png")
 
         if os.path.exists(icon_path):
             pm = QPixmap(icon_path).scaled(
